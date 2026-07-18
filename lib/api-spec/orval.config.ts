@@ -67,6 +67,7 @@ export default defineConfig({
         useDates: true,
         useBigInt: true,
       },
+      schemas: undefined,
     },
   },
 });

@@ -1,0 +1,5 @@
+- [Orval Zod v3 compat](orval-zod-compat.md) — strip `format: uuid/email` from OpenAPI spec; Orval emits Zod v4-only top-level methods for these formats
+- [Orval Params collision](orval-params-collision.md) — removing `schemas` from zod output config prevents TS2308 duplicate export on query-param types
+- [Express 5 param types](express5-params.md) — `req.params.xxx` is `string | string[]` in Express 5 types; always cast to `as string` before Drizzle queries
+- [useAppContext auth guard](useappcontext-auth-guard.md) — useGetAuthMe must be enabled only when Clerk is loaded AND isSignedIn; add `retry: false` to avoid 401 retry storms
+- [use-toast shim](use-toast-shim.md) — shadcn scaffold lacks use-toast.ts; create a Sonner-based shim at components/ui/use-toast.ts

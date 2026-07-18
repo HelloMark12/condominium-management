@@ -1,0 +1,82 @@
+The implementation plan is approved subject to the following answers and correction.
+
+A. Billing trigger
+
+All active apartments created or restored by the administrator count toward subscription billing, regardless of whether an owner has accepted an invitation.
+
+Creating or restoring an active apartment updates the active count and monthly peak.
+
+Accepting an owner invitation affects access only. It must never activate the apartment, update subscription usage or alter the monthly peak.
+
+Please remove Step 7(d) from the owner invitation workflow, which currently refers to updating monthly usage when the owner accepts.
+
+B. Owner invitation cancellation
+
+Yes. An administrator may cancel a pending owner invitation before it is accepted.
+
+The administrator must also be able to:
+
+* Resend an invitation
+* Replace an expired invitation
+* Correct the invited email by cancelling and issuing a new invitation
+
+Cancelling an invitation must not archive the apartment or affect subscription usage.
+
+C. Free-to-standard threshold
+
+Confirmed.
+
+If the monthly peak is 3 apartments, the estimated charge is:
+
+3 × €5 = €15
+
+Once the Standard tier is reached, the rate applies to every apartment, not only those above the first two.
+
+D. Multiple owners
+
+For the MVP, allow only one active or pending owner relationship per apartment.
+
+The database may remain structurally capable of supporting joint ownership later, but the initial interface must not expose a second-owner option.
+
+The backend must also prevent a second active or pending owner invitation from being created.
+
+E. Tenant limit
+
+Hard-block a second tenant invitation while an active tenant or pending tenant invitation already exists.
+
+The owner or administrator must first revoke the current tenant or cancel the pending invitation.
+
+Do not automatically revoke an existing tenant when a new invitation is created.
+
+F. Owner portal across companies
+
+An owner who owns apartments managed by different condominium administration companies should see all owned apartments in one combined list.
+
+Each apartment card must clearly show:
+
+* Apartment
+* Building
+* Locality
+* Condominium administration company
+
+A company filter may be provided, but the owner should not be forced to switch company context to see their properties.
+
+G. Subscription access
+
+Subscription and platform billing information must be completely hidden from owners and tenants.
+
+Only administrators may access:
+
+* Current plan
+* Active apartment count
+* Monthly peak apartment count
+* Rate
+* Estimated charge
+* Usage history
+* Enterprise status
+
+Additional requirement:
+
+When an apartment is archived, preserve all ownership, tenancy and invitation history. The archived apartment should no longer appear as an active property or grant active access, but records must not be permanently deleted.
+
+Please revise the relevant sections to reflect these decisions, briefly show me the corrected points, and then begin Stage 1.

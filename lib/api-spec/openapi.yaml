@@ -3,20 +3,34 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Condominium Management Platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication and user sync
+  - name: companies
+    description: Condominium administration companies
+  - name: buildings
+    description: Buildings within a company
+  - name: units
+    description: Apartments and units within buildings
+  - name: invitations
+    description: Owner and tenant invitations
+  - name: memberships
+    description: Unit membership management
+  - name: me
+    description: Current user self-service
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,7 +38,527 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── Auth ──────────────────────────────────────────────────────────────────
+
+  /auth/sync:
+    post:
+      operationId: syncUser
+      tags: [auth]
+      summary: Sync Clerk user to local database
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserSyncInput"
+      responses:
+        "200":
+          description: User synced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /auth/me:
+    get:
+      operationId: getAuthMe
+      tags: [auth]
+      summary: Get current user with company and unit context
+      responses:
+        "200":
+          description: Current user context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserContext"
+        "401":
+          description: Unauthenticated
+
+  # ── Companies ─────────────────────────────────────────────────────────────
+
+  /companies:
+    post:
+      operationId: registerCompany
+      tags: [companies]
+      summary: Register a new condominium administration company
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyRegistrationInput"
+      responses:
+        "201":
+          description: Company created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+
+  /companies/{companyId}:
+    get:
+      operationId: getCompany
+      tags: [companies]
+      summary: Get company details
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+      responses:
+        "200":
+          description: Company details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "403":
+          description: Forbidden
+        "404":
+          description: Not found
+    patch:
+      operationId: updateCompany
+      tags: [companies]
+      summary: Update company settings
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyUpdate"
+      responses:
+        "200":
+          description: Company updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+
+  /companies/{companyId}/dashboard:
+    get:
+      operationId: getCompanyDashboard
+      tags: [companies]
+      summary: Get administrator dashboard summary
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /companies/{companyId}/buildings:
+    get:
+      operationId: getCompanyBuildings
+      tags: [buildings]
+      summary: List all buildings for a company
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+      responses:
+        "200":
+          description: List of buildings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Building"
+    post:
+      operationId: createBuilding
+      tags: [buildings]
+      summary: Create a building
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuildingInput"
+      responses:
+        "201":
+          description: Building created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Building"
+
+  /companies/{companyId}/invitations:
+    get:
+      operationId: getCompanyInvitations
+      tags: [invitations]
+      summary: List all pending invitations for a company
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, active, revoked, all]
+          description: Filter by status (default pending)
+      responses:
+        "200":
+          description: List of invitations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InvitationDetail"
+
+  /companies/{companyId}/subscription:
+    get:
+      operationId: getCompanySubscription
+      tags: [companies]
+      summary: Get subscription and usage information (administrator only)
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+      responses:
+        "200":
+          description: Subscription and usage info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionInfo"
+        "403":
+          description: Forbidden – owners and tenants cannot access billing
+
+  /companies/{companyId}/usage:
+    get:
+      operationId: getCompanyUsageHistory
+      tags: [companies]
+      summary: Get monthly usage history (administrator only)
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 12
+      responses:
+        "200":
+          description: List of monthly usage records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MonthlyUsageRecord"
+
+  # ── Buildings ─────────────────────────────────────────────────────────────
+
+  /buildings/{buildingId}:
+    get:
+      operationId: getBuilding
+      tags: [buildings]
+      summary: Get building details
+      parameters:
+        - $ref: "#/components/parameters/buildingId"
+      responses:
+        "200":
+          description: Building details with unit count summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildingDetail"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateBuilding
+      tags: [buildings]
+      summary: Update building details
+      parameters:
+        - $ref: "#/components/parameters/buildingId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuildingUpdate"
+      responses:
+        "200":
+          description: Building updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Building"
+
+  /buildings/{buildingId}/units:
+    get:
+      operationId: getBuildingUnits
+      tags: [units]
+      summary: List units for a building
+      parameters:
+        - $ref: "#/components/parameters/buildingId"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, archived, all]
+          description: Filter by status (default active)
+      responses:
+        "200":
+          description: List of units with ownership info
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UnitSummary"
+    post:
+      operationId: createUnit
+      tags: [units]
+      summary: Create a unit (apartment) in a building
+      parameters:
+        - $ref: "#/components/parameters/buildingId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnitInput"
+      responses:
+        "201":
+          description: Unit created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Unit"
+
+  # ── Units ─────────────────────────────────────────────────────────────────
+
+  /units/{unitId}:
+    get:
+      operationId: getUnit
+      tags: [units]
+      summary: Get unit details with ownership and tenancy
+      parameters:
+        - $ref: "#/components/parameters/unitId"
+      responses:
+        "200":
+          description: Unit detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnitDetail"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateUnit
+      tags: [units]
+      summary: Update unit details
+      parameters:
+        - $ref: "#/components/parameters/unitId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnitUpdate"
+      responses:
+        "200":
+          description: Unit updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Unit"
+
+  /units/{unitId}/archive:
+    post:
+      operationId: archiveUnit
+      tags: [units]
+      summary: Archive a unit (preserves all history)
+      parameters:
+        - $ref: "#/components/parameters/unitId"
+      responses:
+        "200":
+          description: Unit archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Unit"
+
+  /units/{unitId}/restore:
+    post:
+      operationId: restoreUnit
+      tags: [units]
+      summary: Restore an archived unit to active status
+      parameters:
+        - $ref: "#/components/parameters/unitId"
+      responses:
+        "200":
+          description: Unit restored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Unit"
+
+  /units/{unitId}/invite-owner:
+    post:
+      operationId: inviteOwner
+      tags: [invitations]
+      summary: Invite an owner to a unit (administrator only)
+      parameters:
+        - $ref: "#/components/parameters/unitId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnerInvitationInput"
+      responses:
+        "201":
+          description: Owner invitation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnitMembership"
+        "409":
+          description: Active or pending owner already exists for this unit
+
+  /units/{unitId}/invite-tenant:
+    post:
+      operationId: inviteTenant
+      tags: [invitations]
+      summary: Invite a tenant to a unit (owner only)
+      parameters:
+        - $ref: "#/components/parameters/unitId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantInvitationInput"
+      responses:
+        "201":
+          description: Tenant invitation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnitMembership"
+        "409":
+          description: Active tenant or pending tenant invitation already exists
+
+  # ── Unit Memberships ───────────────────────────────────────────────────────
+
+  /unit-memberships/{membershipId}:
+    delete:
+      operationId: revokeUnitMembership
+      tags: [memberships]
+      summary: Revoke a unit membership (tenant revocation or invitation cancellation)
+      parameters:
+        - $ref: "#/components/parameters/membershipId"
+      responses:
+        "200":
+          description: Membership revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnitMembership"
+
+  /unit-memberships/{membershipId}/resend:
+    post:
+      operationId: resendInvitation
+      tags: [invitations]
+      summary: Resend a pending invitation
+      parameters:
+        - $ref: "#/components/parameters/membershipId"
+      responses:
+        "200":
+          description: Invitation resent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnitMembership"
+
+  # ── Invitations ────────────────────────────────────────────────────────────
+
+  /invitations/accept:
+    post:
+      operationId: acceptInvitation
+      tags: [invitations]
+      summary: Accept an invitation using a token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationAcceptInput"
+      responses:
+        "200":
+          description: Invitation accepted, membership activated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationAcceptResult"
+        "400":
+          description: Token invalid or expired
+        "409":
+          description: Invitation already accepted
+
+  # ── Me (self-service) ──────────────────────────────────────────────────────
+
+  /me/units:
+    get:
+      operationId: getMyUnits
+      tags: [me]
+      summary: Get all units owned by the current user (across all companies)
+      responses:
+        "200":
+          description: Owned units with building and company context
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OwnedUnitSummary"
+
+  /me/tenancy:
+    get:
+      operationId: getMyTenancy
+      tags: [me]
+      summary: Get the current user's active tenancy (if any)
+      responses:
+        "200":
+          description: Tenancy details (null if not a tenant anywhere)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenancySummary"
+
+# ── Parameters ────────────────────────────────────────────────────────────────
+
 components:
+  parameters:
+    companyId:
+      name: companyId
+      in: path
+      required: true
+      schema:
+        type: string
+    buildingId:
+      name: buildingId
+      in: path
+      required: true
+      schema:
+        type: string
+    unitId:
+      name: unitId
+      in: path
+      required: true
+      schema:
+        type: string
+    membershipId:
+      name: membershipId
+      in: path
+      required: true
+      schema:
+        type: string
+
+# ── Schemas ───────────────────────────────────────────────────────────────────
+
   schemas:
     HealthStatus:
       type: object
@@ -34,3 +568,477 @@ components:
       required:
         - status
 
+    # ── Auth / User ──────────────────────────────────────────────────────────
+
+    UserSyncInput:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+        fullName:
+          type: ["string", "null"]
+
+    User:
+      type: object
+      required: [id, email, createdAt]
+      properties:
+        id:
+          type: string
+        clerkUserId:
+          type: string
+        email:
+          type: string
+        fullName:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    UserContext:
+      type: object
+      required: [user, adminCompanies, ownedUnits, tenancy]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        adminCompanies:
+          type: array
+          items:
+            $ref: "#/components/schemas/Company"
+          description: Companies where the user is an administrator
+        ownedUnits:
+          type: array
+          items:
+            $ref: "#/components/schemas/OwnedUnitSummary"
+          description: Units where the user is an owner
+        tenancy:
+          $ref: "#/components/schemas/TenancySummary"
+          description: Active tenancy, or null
+
+    # ── Company ──────────────────────────────────────────────────────────────
+
+    CompanyRegistrationInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+
+    CompanyUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+
+    Company:
+      type: object
+      required: [id, name, subscriptionTier, enterpriseFlagged, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: ["string", "null"]
+        subscriptionTier:
+          type: string
+          enum: [free, standard, enterprise]
+        enterpriseFlagged:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    DashboardSummary:
+      type: object
+      required:
+        - totalBuildings
+        - totalActiveUnits
+        - totalArchivedUnits
+        - totalActiveOwners
+        - totalActiveTenants
+        - pendingOwnerInvitations
+        - pendingTenantInvitations
+        - currentPlan
+        - estimatedMonthlyChargeCents
+        - peakActiveUnitCount
+      properties:
+        totalBuildings:
+          type: integer
+        totalActiveUnits:
+          type: integer
+        totalArchivedUnits:
+          type: integer
+        totalActiveOwners:
+          type: integer
+        totalActiveTenants:
+          type: integer
+        pendingOwnerInvitations:
+          type: integer
+        pendingTenantInvitations:
+          type: integer
+        currentPlan:
+          type: string
+          enum: [free, standard, enterprise]
+        estimatedMonthlyChargeCents:
+          type: integer
+        peakActiveUnitCount:
+          type: integer
+
+    SubscriptionInfo:
+      type: object
+      required:
+        - currentPlan
+        - activeUnitCount
+        - peakActiveUnitCount
+        - ratePerUnitCents
+        - estimatedAmountCents
+        - billingMonth
+        - enterpriseFlagged
+      properties:
+        currentPlan:
+          type: string
+          enum: [free, standard, enterprise]
+        activeUnitCount:
+          type: integer
+        peakActiveUnitCount:
+          type: integer
+        ratePerUnitCents:
+          type: integer
+          description: Rate in euro cents (e.g. 500 = €5.00)
+        estimatedAmountCents:
+          type: integer
+        billingMonth:
+          type: string
+          description: ISO date string of first day of current billing month
+        enterpriseFlagged:
+          type: boolean
+        freeUnitLimit:
+          type: integer
+          description: Number of free units before billing starts
+
+    MonthlyUsageRecord:
+      type: object
+      required:
+        - id
+        - billingMonth
+        - activeUnitCount
+        - peakActiveUnitCount
+        - subscriptionTier
+        - ratePerUnitCents
+        - estimatedAmountCents
+        - invoiceStatus
+      properties:
+        id:
+          type: string
+        billingMonth:
+          type: string
+        activeUnitCount:
+          type: integer
+        peakActiveUnitCount:
+          type: integer
+        subscriptionTier:
+          type: string
+          enum: [free, standard, enterprise]
+        ratePerUnitCents:
+          type: integer
+        estimatedAmountCents:
+          type: integer
+        finalAmountCents:
+          type: ["integer", "null"]
+        invoiceStatus:
+          type: string
+          enum: [open, finalised, void]
+
+    # ── Building ─────────────────────────────────────────────────────────────
+
+    BuildingInput:
+      type: object
+      required: [name, locality]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        addressLine1:
+          type: ["string", "null"]
+        addressLine2:
+          type: ["string", "null"]
+        locality:
+          type: string
+        postcode:
+          type: ["string", "null"]
+        country:
+          type: string
+          default: MT
+        status:
+          type: string
+          enum: [active, inactive]
+          default: active
+
+    BuildingUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        addressLine1:
+          type: ["string", "null"]
+        addressLine2:
+          type: ["string", "null"]
+        locality:
+          type: string
+        postcode:
+          type: ["string", "null"]
+        country:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive]
+
+    Building:
+      type: object
+      required: [id, companyId, name, locality, status, createdAt]
+      properties:
+        id:
+          type: string
+        companyId:
+          type: string
+        name:
+          type: string
+        addressLine1:
+          type: ["string", "null"]
+        addressLine2:
+          type: ["string", "null"]
+        locality:
+          type: string
+        postcode:
+          type: ["string", "null"]
+        country:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    BuildingDetail:
+      allOf:
+        - $ref: "#/components/schemas/Building"
+        - type: object
+          required: [activeUnitCount, archivedUnitCount]
+          properties:
+            activeUnitCount:
+              type: integer
+            archivedUnitCount:
+              type: integer
+
+    # ── Unit ─────────────────────────────────────────────────────────────────
+
+    UnitInput:
+      type: object
+      required: [unitNumber]
+      properties:
+        unitNumber:
+          type: string
+          minLength: 1
+          description: e.g. "Apt 1", "Unit 4A"
+        unitType:
+          type: string
+          enum: [apartment, garage, commercial, other]
+          default: apartment
+        floor:
+          type: ["integer", "null"]
+
+    UnitUpdate:
+      type: object
+      properties:
+        unitNumber:
+          type: string
+          minLength: 1
+        unitType:
+          type: string
+          enum: [apartment, garage, commercial, other]
+        floor:
+          type: ["integer", "null"]
+
+    Unit:
+      type: object
+      required: [id, companyId, buildingId, unitNumber, unitType, status, createdAt]
+      properties:
+        id:
+          type: string
+        companyId:
+          type: string
+        buildingId:
+          type: string
+        unitNumber:
+          type: string
+        unitType:
+          type: string
+          enum: [apartment, garage, commercial, other]
+        floor:
+          type: ["integer", "null"]
+        status:
+          type: string
+          enum: [active, archived]
+        activatedAt:
+          type: ["string", "null"]
+          format: date-time
+        archivedAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UnitSummary:
+      allOf:
+        - $ref: "#/components/schemas/Unit"
+        - type: object
+          properties:
+            ownerName:
+              type: ["string", "null"]
+            ownerEmail:
+              type: ["string", "null"]
+            ownerStatus:
+              type: ["string", "null"]
+              enum: [active, pending, null]
+            tenantName:
+              type: ["string", "null"]
+            tenantStatus:
+              type: ["string", "null"]
+              enum: [active, pending, null]
+
+    UnitDetail:
+      allOf:
+        - $ref: "#/components/schemas/Unit"
+        - type: object
+          required: [building]
+          properties:
+            building:
+              $ref: "#/components/schemas/Building"
+            owner:
+              $ref: "#/components/schemas/UnitMembership"
+            tenant:
+              $ref: "#/components/schemas/UnitMembership"
+
+    OwnedUnitSummary:
+      type: object
+      required: [membership, unit, building, company]
+      properties:
+        membership:
+          $ref: "#/components/schemas/UnitMembership"
+        unit:
+          $ref: "#/components/schemas/Unit"
+        building:
+          $ref: "#/components/schemas/Building"
+        company:
+          $ref: "#/components/schemas/Company"
+
+    TenancySummary:
+      type: ["object", "null"]
+      properties:
+        membership:
+          $ref: "#/components/schemas/UnitMembership"
+        unit:
+          $ref: "#/components/schemas/Unit"
+        building:
+          $ref: "#/components/schemas/Building"
+        company:
+          $ref: "#/components/schemas/Company"
+
+    # ── Memberships & Invitations ─────────────────────────────────────────────
+
+    OwnerInvitationInput:
+      type: object
+      required: [invitedName, invitedEmail]
+      properties:
+        invitedName:
+          type: string
+          minLength: 1
+        invitedEmail:
+          type: string
+
+    TenantInvitationInput:
+      type: object
+      required: [invitedName, invitedEmail]
+      properties:
+        invitedName:
+          type: string
+          minLength: 1
+        invitedEmail:
+          type: string
+
+    InvitationAcceptInput:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 1
+
+    UnitMembership:
+      type: object
+      required: [id, unitId, role, status, invitedName, invitedEmail, createdAt]
+      properties:
+        id:
+          type: string
+        unitId:
+          type: string
+        userId:
+          type: ["string", "null"]
+        role:
+          type: string
+          enum: [owner, tenant]
+        status:
+          type: string
+          enum: [pending, active, revoked]
+        invitedName:
+          type: string
+        invitedEmail:
+          type: string
+        invitationExpiresAt:
+          type: ["string", "null"]
+          format: date-time
+        activatedAt:
+          type: ["string", "null"]
+          format: date-time
+        revokedAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    InvitationDetail:
+      allOf:
+        - $ref: "#/components/schemas/UnitMembership"
+        - type: object
+          required: [unit, building]
+          properties:
+            unit:
+              $ref: "#/components/schemas/Unit"
+            building:
+              $ref: "#/components/schemas/Building"
+
+    InvitationAcceptResult:
+      type: object
+      required: [membership, role]
+      properties:
+        membership:
+          $ref: "#/components/schemas/UnitMembership"
+        role:
+          type: string
+          enum: [owner, tenant]
+        redirectTo:
+          type: string
+          description: Suggested frontend redirect path after acceptance
