@@ -3,7 +3,7 @@
 **Date:** 2025-07-18  
 **Commit:** 066f825  
 **Repository:** https://github.com/HelloMark12/condominium-management  
-**Test results:** API 61/61 ✅ | Frontend 18/18 ✅ | Typechecks: 0 errors ✅ | Builds: ✅
+**Test results:** API 61/61 ✅ | Frontend 50/50 ✅ | Typechecks: 0 errors ✅ | Builds: ✅
 
 ---
 
@@ -28,7 +28,7 @@
 | **M4** | Reliability | Medium | ✅ Fixed | `artifacts/api-server/src/routes/companies.ts` | Pagination `limit` parameter was unconstrained, allowing `limit=999999`. Now validated: must be an integer between 1 and 36 (default 12). Returns 400 on invalid value. | Upper bound of 36 is a conservative default. Different endpoints may warrant different caps. |
 | **L1** | UX | Low | ✅ Addressed | `artifacts/web/src/App.tsx` | Route guards show a spinner/loading screen while Clerk and the user context query are resolving, preventing flash of unauthorized content. | Loading screen is generic — no brand-specific design. |
 | **L2** | UX | Low | ✅ Addressed | `artifacts/api-server/src/routes/companies.ts` | `GET /companies/:id/subscription` returns `pricingConfigured: false` when no active pricing config exists, allowing the frontend to show a meaningful message instead of showing €0 or an error. | The frontend billing page does not yet have a specific "pricing not configured" empty state — it falls back to generic text. |
-| **L3** | UX | Low | ⚠️ Partial | `artifacts/api-server/src/lib/billing.ts` | Enterprise tier with `enterprisePricingBehavior = 'custom'` returns `estimatedAmountCents = 0` to indicate "custom/contact for pricing". API response includes `enterpriseFlagged: true`. | No frontend "Contact us for pricing" UI component exists — the billing page shows €0.00, which is misleading. Recommend a follow-up UX task to add a conditional render for enterprise custom pricing. |
+| **L3** | UX | Low | ✅ Fixed | `artifacts/web/src/lib/billingDisplay.ts` (new), `artifacts/web/src/pages/admin/SubscriptionPage.tsx`, `artifacts/web/src/test/billingDisplay.test.ts` (new) | Enterprise custom pricing displayed "€0.00" in three places: the estimated charge figure, the explanation sentence, and history table rows. Added `billingDisplay.ts` with pure helpers: `isEnterpriseCustom()`, `formatEstimatedCharge()`, `formatChargeExplanation()`, `formatHistoryRate()`, `formatHistoryAmount()`. Detection is driven by `currentPlan === 'enterprise' && estimatedAmountCents === 0` — both values are set by `calculateTier()` and `calculateEstimatedAmountCents()` reading from the active `pricing_configs` row, with no hardcoded apartment threshold. `SubscriptionPage.tsx` now renders "Custom pricing" (with phone icon) for the charge figure, "Your plan is billed at a custom rate. Contact us for your invoice." for the explanation, "Custom" for history rate cells, and "Custom pricing" for history amount cells. 32 dedicated unit tests in Suite 36b assert that "€0.00" never appears for enterprise custom, and that the detection is plan-driven not threshold-driven. | Enterprise/per_unit and enterprise/fixed behaviors correctly show numeric amounts. No admin UI yet to manage pricing configs. |
 
 ---
 
@@ -48,7 +48,8 @@
 | 34 | Frontend route security (C2) — AdminGuard, OwnerGuard, TenantGuard, role derivation | 10 | ✅ |
 | 35 | Archived property UI — roleContext becomes 'pending' when units/tenancy removed | 2 | ✅ |
 | 36 | Billing UI data shape — pricingConfigured flag, snapshot fields, enterprise custom | 3 | ✅ |
-| **Total** | | **69** | **✅ All pass** |
+| **36b** | **Enterprise custom pricing display (L3)** — `isEnterpriseCustom`, `formatEstimatedCharge`, `formatChargeExplanation`, `formatHistoryRate`, `formatHistoryAmount`; detection is plan-driven not threshold-driven | **32** | **✅** |
+| **Total** | | **101** | **✅ All pass** |
 
 ---
 

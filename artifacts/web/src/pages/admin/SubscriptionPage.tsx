@@ -1,9 +1,16 @@
-import { CreditCard, TrendingUp, AlertCircle, CheckCircle2 } from "lucide-react";
+import { CreditCard, TrendingUp, AlertCircle, CheckCircle2, PhoneCall } from "lucide-react";
 import { 
   useGetCompanySubscription, getGetCompanySubscriptionQueryKey,
   useGetCompanyUsageHistory, getGetCompanyUsageHistoryQueryKey
 } from "@workspace/api-client-react";
 import { useAppContext } from "@/hooks/useAppContext";
+import {
+  isEnterpriseCustom,
+  formatEstimatedCharge,
+  formatChargeExplanation,
+  formatHistoryRate,
+  formatHistoryAmount,
+} from "@/lib/billingDisplay";
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -68,20 +75,32 @@ export default function SubscriptionPage() {
               </div>
               <div>
                 <div className="text-primary-foreground/70 text-sm mb-1">Estimated Charge</div>
-                <div className="text-4xl font-bold flex items-baseline gap-2">
-                  €{(sub.estimatedAmountCents / 100).toFixed(2)}
-                  <span className="text-sm font-normal text-primary-foreground/60">this month</span>
-                </div>
+                {isEnterpriseCustom(sub.currentPlan, sub.estimatedAmountCents) ? (
+                  <div className="flex items-center gap-2" data-testid="enterprise-custom-charge">
+                    <PhoneCall className="h-6 w-6 text-primary-foreground/80" />
+                    <span className="text-xl font-semibold text-primary-foreground" data-testid="enterprise-custom-label">
+                      Custom pricing
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-4xl font-bold flex items-baseline gap-2" data-testid="standard-charge">
+                    {formatEstimatedCharge(sub.currentPlan, sub.estimatedAmountCents)}
+                    <span className="text-sm font-normal text-primary-foreground/60">this month</span>
+                  </div>
+                )}
               </div>
             </div>
             
             <div className="bg-black/20 rounded-lg p-4 text-sm leading-relaxed border border-white/10">
               <div className="flex items-start gap-2">
                 <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-white/70" />
-                <p className="text-primary-foreground/90">
-                  Your bill is based on the highest number of simultaneously active apartments during the calendar month. 
-                  If your peak was {sub.peakActiveUnitCount} apartments, your estimated charge is 
-                  {' '}{sub.peakActiveUnitCount} × €{(sub.ratePerUnitCents/100).toFixed(2)} = €{(sub.estimatedAmountCents/100).toFixed(2)}.
+                <p className="text-primary-foreground/90" data-testid="charge-explanation">
+                  {formatChargeExplanation(
+                    sub.currentPlan,
+                    sub.peakActiveUnitCount,
+                    sub.ratePerUnitCents,
+                    sub.estimatedAmountCents,
+                  )}
                 </p>
               </div>
             </div>
@@ -95,7 +114,11 @@ export default function SubscriptionPage() {
           <CardContent className="space-y-4">
             <div className="flex justify-between items-center py-3 border-b border-border">
               <span className="text-muted-foreground">Rate per unit</span>
-              <span className="font-semibold">€{(sub.ratePerUnitCents/100).toFixed(2)}</span>
+              <span className="font-semibold" data-testid="rate-per-unit">
+                {isEnterpriseCustom(sub.currentPlan, sub.estimatedAmountCents)
+                  ? "Custom"
+                  : `€${((sub.ratePerUnitCents ?? 0) / 100).toFixed(2)}`}
+              </span>
             </div>
             <div className="flex justify-between items-center py-3 border-b border-border">
               <span className="text-muted-foreground">Current active</span>
@@ -143,8 +166,12 @@ export default function SubscriptionPage() {
                     <tr key={record.id} className="hover:bg-muted/50 transition-colors">
                       <td className="px-4 py-3 font-medium">{format(new Date(record.billingMonth), 'MMM yyyy')}</td>
                       <td className="px-4 py-3">{record.peakActiveUnitCount}</td>
-                      <td className="px-4 py-3 text-muted-foreground">€{(record.ratePerUnitCents/100).toFixed(2)}</td>
-                      <td className="px-4 py-3 font-semibold">€{((record.finalAmountCents || record.estimatedAmountCents)/100).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {formatHistoryRate(record.subscriptionTier, record.estimatedAmountCents, record.ratePerUnitCents)}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">
+                        {formatHistoryAmount(record.subscriptionTier, record.estimatedAmountCents, record.finalAmountCents)}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <Badge variant={record.invoiceStatus === 'finalised' ? 'default' : 'secondary'} className="capitalize">
                           {record.invoiceStatus}
