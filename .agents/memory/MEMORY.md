@@ -3,3 +3,5 @@
 - [Express 5 param types](express5-params.md) — `req.params.xxx` is `string | string[]` in Express 5 types; always cast to `as string` before Drizzle queries
 - [useAppContext auth guard](useappcontext-auth-guard.md) — useGetAuthMe must be enabled only when Clerk is loaded AND isSignedIn; add `retry: false` to avoid 401 retry storms
 - [use-toast shim](use-toast-shim.md) — shadcn scaffold lacks use-toast.ts; create a Sonner-based shim at components/ui/use-toast.ts
+- [Billing DB-driven architecture](billing-db-driven.md) — all commercial thresholds from DB (pricing_configs); no hardcoded constants; snapshot columns on monthly_usage_records
+- [Test auth middleware pattern](test-auth-middleware.md) — x-test-clerk-user-id header bypasses Clerk in NODE_ENV=test; resolveUser auto-creates user rows in test mode
