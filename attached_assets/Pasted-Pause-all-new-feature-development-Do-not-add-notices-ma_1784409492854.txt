@@ -1,0 +1,967 @@
+Pause all new feature development.
+
+Do not add notices, maintenance, documents, voting, condominium-owner payments, contractors, AI features or any further product functionality.
+
+Claude has completed an independent static security and test audit of the GitHub repository. Treat the attached audit as the authoritative defect list for this correction cycle.
+
+Your task is to secure, correct and test the existing foundation.
+
+IMPORTANT WORKFLOW
+
+Replit remains responsible for:
+
+* Implementing the fixes
+* Writing automated tests
+* Running the tests
+* Fixing failures
+* Updating the database schema and migrations
+* Pushing the corrected code to GitHub
+
+Claude will perform a second independent review after this cycle.
+
+Do not mark a defect as fixed merely because code was changed. Every Critical and High finding must have an automated regression test proving the expected behaviour.
+
+Manual founder testing will be completed later in the project. For this correction cycle, rely on automated unit, integration and browser-level tests.
+
+---
+
+# PART 1 — CRITICAL SECURITY FIXES
+
+## 1. Building authorisation
+
+Fix all building routes so users cannot read or modify buildings belonging to another condominium administration company.
+
+Apply backend authorisation to:
+
+* GET /buildings/:buildingId
+* PATCH /buildings/:buildingId
+* GET /buildings/:buildingId/units
+
+Rules:
+
+Administrator:
+
+* May access a building only when they have an active administrator membership for the building’s company.
+* May edit a building only when they are an administrator of that company.
+
+Owner:
+
+* May see limited building information only when they have an active owner relationship with an active apartment in that building.
+* May not edit the building.
+
+Tenant:
+
+* May see limited building information only when they have an active tenant relationship with an active apartment in that building.
+* May not edit the building.
+
+The backend must:
+
+* Resolve the building from the database.
+* Determine the building’s actual company.
+* Check the authenticated user’s database relationships.
+* Never trust company IDs, building IDs, role claims or route parameters without verification.
+* Return 403 or 404 for unauthorised access.
+* Never expose another company’s data.
+
+Extract shared building-access helpers where practical so the same logic is not duplicated inconsistently.
+
+---
+
+## 2. Frontend route protection
+
+Add role-aware route guards in App.tsx or the relevant routing layer.
+
+Restrictions:
+
+* /admin/* requires administrator access.
+* /owner/* requires at least one active ownership relationship.
+* /tenant/* requires at least one active tenancy relationship.
+
+When a user opens an unauthorised route:
+
+* Redirect them to the correct home/dashboard.
+* Do not briefly render restricted page content.
+* Display an access-denied message where appropriate.
+
+A person may have multiple relationships. For example, they could be an owner of one apartment and a tenant of another. The application should allow them to access the correct sections based on their active relationships.
+
+Frontend route guards are defense-in-depth only. Backend authorisation remains mandatory.
+
+---
+
+## 3. Archived apartment access
+
+When an apartment is archived:
+
+* Preserve the apartment record.
+* Preserve ownership history.
+* Preserve tenancy history.
+* Preserve invitation history.
+* Preserve billing history.
+* Do not permanently delete records.
+
+However, an archived apartment must stop granting active access.
+
+Owners and tenants must no longer:
+
+* See the apartment in active dashboards.
+* Open the apartment through a direct URL.
+* Access the apartment through an API request.
+* Access the building through that archived relationship.
+* Receive active permissions from the archived apartment.
+
+Update all relevant endpoints, including:
+
+* GET /units/:unitId
+* GET /auth/me
+* GET /me/units
+* GET /me/tenancy
+* Building-access relationship checks
+
+Owner and tenant access must require both:
+
+1. unit membership status = active; and
+2. unit status = active.
+
+The administrator may still view archived apartments and their history.
+
+When an apartment is restored:
+
+* Restore the apartment itself to active status.
+* Do not automatically reactivate a previously revoked tenant.
+* Do not automatically create new access relationships.
+* Existing ownership access may remain subject to the current product rule, but test and document the exact behaviour clearly.
+
+---
+
+## 4. Invitations for archived apartments
+
+Do not allow:
+
+* Owner invitations to be created for archived apartments.
+* Tenant invitations to be created for archived apartments.
+* Existing pending invitations to be accepted after the apartment is archived.
+
+Return a clear validation error.
+
+---
+
+## 5. Invitation identity verification
+
+An invitation token must not operate as an unrestricted bearer token.
+
+The Clerk-verified email address of the authenticated user accepting the invitation must match the invitedEmail stored against the invitation.
+
+Requirements:
+
+* Compare email addresses case-insensitively.
+* Normalise leading/trailing whitespace.
+* Use the verified email from Clerk.
+* Reject acceptance where the emails do not match.
+* Return a clear but non-enumerating error.
+* Do not disclose sensitive invitation details.
+
+Continue enforcing:
+
+* Cryptographically secure random invitation tokens
+* Expiration
+* Single use
+* Revocation
+* Duplicate invitation prevention
+* Token removal or invalidation after successful acceptance
+
+---
+
+# PART 2 — OWNER AND TENANT RELATIONSHIP RULES
+
+## 6. One owner per apartment in the MVP
+
+For the current MVP, an apartment may have a maximum of:
+
+* One pending or active owner relationship
+
+The data model may remain capable of supporting joint ownership later, but the current UI and backend must not allow a second owner.
+
+Add PostgreSQL-level enforcement using a partial unique index or an equally reliable database constraint.
+
+Example intention:
+
+UNIQUE unit_id
+WHERE role = 'owner'
+AND status IN ('pending', 'active')
+
+Keep the API pre-check for a user-friendly validation message.
+
+Catch database unique-constraint violations and return HTTP 409 with a clear response.
+
+---
+
+## 7. One tenant per apartment in the MVP
+
+An apartment may have a maximum of:
+
+* One pending or active tenant relationship
+
+Add PostgreSQL-level enforcement using a partial unique index or equivalent.
+
+Example intention:
+
+UNIQUE unit_id
+WHERE role = 'tenant'
+AND status IN ('pending', 'active')
+
+Do not automatically revoke an existing tenant when another tenant is invited.
+
+The owner or administrator must first:
+
+* Cancel the pending invitation; or
+* Revoke the current tenancy.
+
+Catch database unique-constraint violations and return HTTP 409.
+
+---
+
+## 8. Relationship-specific revocation
+
+Revoking one tenancy must revoke only that specific tenancy relationship.
+
+It must not:
+
+* Delete the user account.
+* Revoke ownership of another apartment.
+* Revoke another tenancy.
+* Revoke administrator access.
+* Remove unrelated company relationships.
+
+One user may own multiple apartments and potentially hold different relationships across different companies.
+
+---
+
+# PART 3 — FULLY CONFIGURABLE SUBSCRIPTION BILLING
+
+## 9. No commercial billing rule may be hardcoded
+
+Do not hardcode any of the following in application logic:
+
+* Number of free apartments
+* Standard-tier minimum
+* Standard-tier maximum
+* Enterprise threshold
+* Price per apartment
+* Enterprise pricing behaviour
+* Fixed monthly fees
+* Effective dates
+
+The following are initial seeded values only:
+
+* Free apartment limit: 2
+* Standard tier: 3 to 49 apartments
+* Standard rate: €5 per apartment per month
+* Enterprise threshold: 50 apartments
+* Enterprise pricing: custom
+
+These values must be stored in the database and be editable later without modifying or redeploying code.
+
+Remove or replace constants such as:
+
+* DEFAULT_RATE_PER_UNIT_CENTS
+* Hardcoded thresholds of 2, 3, 49 or 50
+* Any inline subscription-tier comparisons
+
+All subscription calculations must use the applicable database pricing configuration.
+
+---
+
+## 10. Platform pricing configuration
+
+Create a versioned pricing configuration structure controlled only by the Condominium Management platform owner or super administrator.
+
+The pricing configuration must support:
+
+* Configuration ID
+* Name or version label
+* Free apartment limit
+* Standard minimum apartment count
+* Standard maximum apartment count
+* Enterprise starting apartment count
+* Standard rate per apartment
+* Enterprise pricing behaviour
+* Optional enterprise fixed rate
+* Optional enterprise per-apartment rate
+* Currency
+* Effective-from date
+* Optional effective-to date
+* Draft, scheduled, active or retired status
+* Created date
+* Created by
+* Internal notes
+
+Initial seeded configuration:
+
+* Free apartment limit = 2
+* Standard minimum = 3
+* Standard maximum = 49
+* Enterprise starts = 50
+* Standard rate = 500 cents
+* Currency = EUR
+* Enterprise pricing = custom
+
+The logic must not assume that Standard always starts immediately after the free limit. Validate that configuration ranges are coherent.
+
+Examples of future changes the system must support:
+
+* Five apartments free
+* Standard from 6 to 99
+* Enterprise from 100
+* €3.50 per apartment
+* €6 per apartment
+* A future configuration becoming active on 1 January
+* Different rates for different contractual periods
+
+---
+
+## 11. Platform super-administrator permissions
+
+Create the database and backend permission structure for a future Platform Admin panel.
+
+Only the platform owner or super administrator may:
+
+* Create pricing configurations
+* Edit draft configurations
+* Schedule a future pricing configuration
+* Activate a configuration
+* Retire a configuration
+* Change free apartment limits
+* Change tier thresholds
+* Change per-apartment rates
+* View pricing history
+* Create company-specific pricing overrides
+
+Condominium administration companies must never be able to alter platform pricing.
+
+The complete visual Platform Admin panel does not need to be built in this correction cycle unless it is already required for testing. The secure data model, backend permissions and testable API/service layer must exist.
+
+Do not identify platform super administrators through a frontend-only flag.
+
+Use a secure server-side role or allowlist structure.
+
+---
+
+## 12. Pricing effective dates
+
+Each pricing configuration must have an effective-from date.
+
+When calculating a billing month:
+
+* Select the configuration applicable to that billing month.
+* Do not simply use whichever configuration is active today.
+* Ensure only one platform pricing configuration applies to a company for a given billing date, unless a company-specific override applies.
+* Reject overlapping active configuration ranges or define deterministic priority rules.
+
+A future pricing configuration must not affect current or previous billing months before its effective date.
+
+---
+
+## 13. Historical pricing snapshot
+
+Every monthly usage record must preserve the exact pricing rules used for that month.
+
+Store a snapshot including at least:
+
+* Pricing configuration ID
+* Free apartment limit
+* Standard minimum
+* Standard maximum
+* Enterprise threshold
+* Rate per apartment
+* Enterprise pricing behaviour
+* Currency
+* Applied company override ID, where relevant
+
+Once a billing month is finalised:
+
+* Its thresholds must not change.
+* Its rate must not change.
+* Its tier must not be recalculated using new pricing.
+* Its final amount must not change automatically.
+
+Editing or adding a new live pricing configuration must never alter historical finalised records.
+
+---
+
+## 14. Company-specific pricing overrides
+
+Design and implement the database structure for company-specific pricing overrides.
+
+An override may support:
+
+* Company ID
+* Custom free apartment limit
+* Custom Standard minimum
+* Custom Standard maximum
+* Custom Enterprise threshold
+* Custom per-apartment rate
+* Fixed monthly fee
+* Enterprise custom rate
+* Start date
+* End date
+* Active/inactive status
+* Internal reason
+* Internal notes
+* Created by
+* Created date
+
+Pricing priority:
+
+1. Applicable active company-specific override
+2. Applicable platform pricing configuration
+3. Fail safely if neither exists
+
+Do not silently fall back to hardcoded application constants.
+
+The full company-override user interface can be postponed, but the data structure and calculation service must support it.
+
+---
+
+## 15. Billable property types
+
+Only active records where:
+
+unit_type = 'apartment'
+
+currently count toward platform subscription billing.
+
+Do not count:
+
+* Garages
+* Commercial units
+* Common areas
+* Other units
+
+These non-apartment units may still exist in the property-management system, but they must not currently affect:
+
+* Current billable apartment count
+* Monthly peak apartment count
+* Subscription tier
+* Estimated monthly charge
+
+Keep the architecture capable of making billable unit types configurable later, but do not build a complex interface for this now.
+
+All user-facing billing wording must use “apartments”, not “units”.
+
+---
+
+## 16. Monthly peak billing rule
+
+Billing is based on the highest number of simultaneously active billable apartments reached during the calendar month.
+
+The applicable thresholds and rate must come from the pricing snapshot for that month.
+
+Example using the seeded configuration:
+
+* Peak 0–2: Free
+* Peak 3–49: Standard
+* Peak 50 or more: Enterprise/custom
+
+Once Standard is reached, the per-apartment rate applies to every billable apartment.
+
+Using the initial seeded configuration:
+
+* Peak 3 × €5 = €15
+* Peak 10 × €5 = €50
+* Peak 49 × €5 = €245
+
+These figures are examples based on the seeded configuration, not permanent business rules.
+
+When an apartment is archived:
+
+* Current billable apartment count decreases.
+* Monthly peak does not decrease.
+* Applicable tier for the month does not decrease.
+* Estimated amount based on the peak does not decrease.
+
+When an apartment is restored:
+
+* Recalculate current billable apartment count.
+* Increase the monthly peak only when the new active count exceeds the existing peak.
+
+Owner invitation acceptance and tenant invitation acceptance must not affect billing.
+
+---
+
+## 17. Single source of truth for the current tier
+
+Fix the disagreement between:
+
+* companies.subscriptionTier
+* monthly_usage_records.subscriptionTier
+
+The current billing month’s tier must be based on the monthly peak and the applicable pricing snapshot.
+
+Do not determine the current billing tier from the current active apartment count.
+
+Prefer one reliable source of truth.
+
+Recommended approach:
+
+* Treat the current monthly usage record as the billing source of truth.
+* Derive displayed plan/tier information from that record.
+* Avoid maintaining a second independently calculated company-level tier.
+
+When an apartment is archived after reaching Standard or Enterprise during the month, the current-month tier must remain based on the peak.
+
+---
+
+## 18. Atomic billing updates
+
+Make current apartment-count and monthly-peak updates atomic.
+
+Use:
+
+* A PostgreSQL transaction with row locking; or
+* An atomic update using GREATEST(); or
+* An equally safe mechanism.
+
+Concurrent apartment creation, restoration or archival must not:
+
+* Under-count the monthly peak
+* Produce a stale current apartment count
+* Overwrite another operation’s calculation
+* Produce an incorrect tier
+* Produce an incorrect estimated amount
+
+Test concurrent operations.
+
+---
+
+## 19. Month rollover and finalisation
+
+Use Europe/Malta as the billing timezone.
+
+When a new calendar month begins:
+
+1. Identify the previous open monthly usage record.
+2. Finalise it.
+3. Set final_amount_cents.
+4. Set invoice_status = finalised.
+5. Prevent further automatic recalculation of that finalised record.
+6. Select the pricing configuration applicable to the new billing month.
+7. Apply any valid company-specific override.
+8. Create the new monthly usage record.
+9. Set current apartment count to the number of currently active billable apartments.
+10. Set the starting peak equal to that current count.
+11. Store the full pricing snapshot.
+
+Use a scheduled job where available, plus a safe lazy first-request check as a fallback.
+
+The rollover process must be idempotent.
+
+Running it twice must not create duplicate records or alter a finalised month incorrectly.
+
+---
+
+# PART 4 — DATABASE INTEGRITY AND PERFORMANCE
+
+## 20. Unit-to-building company integrity
+
+Ensure:
+
+units.company_id = buildings.company_id
+
+for the associated building.
+
+Use the strongest reasonable protection:
+
+* Composite foreign key
+* Database trigger
+* Transactional application enforcement
+* Supporting integration test
+
+Do not rely only on frontend input.
+
+---
+
+## 21. Required indexes
+
+Add appropriate indexes, including:
+
+* unit_memberships(user_id, role, status)
+* unit_memberships(company_id, status)
+* units(company_id, status, unit_type)
+* units(building_id, status)
+* monthly_usage_records(company_id, billing_month)
+* pricing configuration effective-date lookup indexes
+* company-specific override company/date lookup indexes
+
+Retain existing useful unique constraints.
+
+---
+
+## 22. Company slug collisions
+
+Handle companies with identical or similar names gracefully.
+
+Do not expose a raw database error.
+
+Either:
+
+* Generate a unique slug automatically; or
+* Return a clear validation response.
+
+Add an automated test.
+
+---
+
+## 23. Input validation and rate limiting
+
+Validate query parameters, including pagination limits, as positive bounded integers.
+
+Add reasonable rate limiting or idempotency protection to sensitive endpoints such as:
+
+* Company creation
+* Owner invitations
+* Tenant invitations
+* Invitation acceptance
+* Resend invitation
+
+Do not allow repeated requests to create accidental duplicate records.
+
+---
+
+# PART 5 — AUTOMATED TESTING INFRASTRUCTURE
+
+## 24. Install testing tools
+
+Install and configure appropriate tools, including:
+
+Backend:
+
+* Vitest
+* Supertest
+* A real isolated PostgreSQL test database
+
+Frontend:
+
+* Vitest
+* React Testing Library
+
+Browser/end-to-end:
+
+* Playwright, where supported
+
+Add:
+
+* Test scripts to relevant package.json files
+* A root-level test command
+* Database setup and teardown
+* Repeatable test fixtures
+* A CI workflow or equivalent automated test command
+
+Tests must run in isolation and must not alter development or production data.
+
+---
+
+# PART 6 — REQUIRED UNIT TESTS
+
+## 25. Pricing and billing calculation tests
+
+Do not write tests that assume the seeded values are permanent constants.
+
+Create pricing configurations during tests.
+
+Test:
+
+* Free limit = 2
+* Free limit changed to 5
+* Standard range changed
+* Enterprise threshold changed
+* Rate changed from €5 to another value
+* Fixed fee override
+* Per-apartment company override
+* Future pricing version selection
+* Pricing selection by effective date
+* Historical snapshot immutability
+
+Test seeded examples:
+
+* 0 apartments under free limit
+* 1 apartment under free limit
+* 2 apartments under seeded free limit
+* 3 apartments under seeded configuration = Standard and €15
+* 49 apartments under seeded configuration = Standard and €245
+* 50 apartments under seeded configuration = Enterprise/custom
+
+Also test dynamically:
+
+* Free limit 5 and peak 4 = Free
+* Free limit 5 and peak 6 = Standard
+* Standard maximum 99 and peak 50 = Standard
+* Enterprise threshold 100 and peak 100 = Enterprise
+* Rate €3.50 and peak 10 = €35
+
+---
+
+## 26. Timezone tests
+
+Test Europe/Malta billing-month selection:
+
+* Around UTC month boundaries
+* During daylight-saving transitions
+* First day of a month
+* Last day of a month
+* Future effective pricing beginning at midnight Malta time
+
+---
+
+## 27. Invitation utility tests
+
+Test:
+
+* Secure token length
+* Token uniqueness
+* Expiry calculation
+* Email normalisation
+* Case-insensitive verified-email comparison
+* Revocation
+* Single-use behaviour
+
+---
+
+# PART 7 — REQUIRED API INTEGRATION TESTS
+
+Run integration tests against a real isolated PostgreSQL database and Express instance.
+
+Use multiple users and at least two separate condominium administration companies.
+
+## 28. Company isolation tests
+
+Test:
+
+* Admin A cannot GET Company B’s building.
+* Admin A cannot PATCH Company B’s building.
+* Admin A cannot list Company B’s apartments.
+* Owner A cannot access Company B admin endpoints.
+* Tenant A cannot access Company B admin endpoints.
+* Changing company IDs manually does not bypass access.
+* Changing building IDs manually does not bypass access.
+* Changing apartment UUIDs manually does not bypass access.
+
+---
+
+## 29. Owner and tenant access tests
+
+Test:
+
+* Owner can access an active apartment they own.
+* Owner cannot access another apartment.
+* Tenant can access their active tenancy.
+* Tenant cannot access another apartment.
+* Archived apartment disappears from owner results.
+* Archived apartment disappears from tenant results.
+* Archived apartment direct URL returns 403 or 404.
+* Revoking one tenancy does not affect another ownership relationship.
+* Restoring an apartment does not automatically restore a revoked tenant.
+
+---
+
+## 30. Owner invitation tests
+
+Test:
+
+* Invite a new user.
+* Invite an existing Clerk user.
+* Cancel a pending invitation.
+* Resend an invitation.
+* Replace an expired invitation.
+* Reject a second pending owner.
+* Reject a second active owner.
+* Two simultaneous owner invitations result in exactly one success.
+* Invitation cannot be accepted by the wrong verified email.
+* Invitation cannot be accepted after expiry.
+* Invitation cannot be accepted after revocation.
+* Invitation cannot be accepted twice.
+* Invitation cannot be created or accepted for an archived apartment.
+* Invitation acceptance does not affect subscription billing.
+
+---
+
+## 31. Tenant invitation tests
+
+Test:
+
+* Owner can invite a tenant to an apartment they own.
+* Owner cannot invite a tenant to an apartment they do not own.
+* Tenant cannot invite another tenant.
+* Administrator can revoke tenant access.
+* Owner can revoke tenant access for their apartment.
+* Owner cannot revoke a tenant from another owner’s apartment.
+* Reject a second pending tenant.
+* Reject a second active tenant.
+* Two simultaneous tenant invitations result in exactly one success.
+* Wrong verified email cannot accept.
+* Expired, revoked or reused token cannot be accepted.
+* Archived apartment cannot issue or accept a tenant invitation.
+* Tenant acceptance does not affect subscription billing.
+
+---
+
+## 32. Configurable billing tests
+
+Create pricing data during the tests.
+
+Test:
+
+* Only apartments count.
+* Garages do not count.
+* Commercial units do not count.
+* Other units do not count.
+* Creating an apartment updates current count.
+* Creating an apartment may update the peak.
+* Archiving decreases current count only.
+* Archiving does not lower the monthly peak.
+* Archiving does not lower the current month’s applicable tier.
+* Restoring can increase the peak.
+* Owner invitation acceptance leaves billing unchanged.
+* Tenant invitation acceptance leaves billing unchanged.
+* Pricing is read from the database.
+* No commercial threshold or rate is taken from hardcoded constants.
+* Company-specific override is applied when valid.
+* Platform pricing is used when no override exists.
+* Historical snapshots remain unchanged after pricing changes.
+* Future pricing does not apply early.
+* Correct pricing version is selected by effective date.
+* Enterprise displays custom pricing when configured as custom.
+* Concurrent apartment operations do not under-count the peak.
+
+---
+
+## 33. Month rollover tests
+
+Test:
+
+* Previous month becomes finalised.
+* final_amount_cents is stored.
+* New month is created once only.
+* New month starts with current active billable apartment count.
+* New month peak starts at the same value.
+* New month receives the correct pricing snapshot.
+* Running rollover twice is idempotent.
+* Finalised historical month remains unchanged after live pricing changes.
+
+---
+
+# PART 8 — FRONTEND AND BROWSER TESTS
+
+## 34. Route security tests
+
+Test:
+
+* Tenant opening /admin/dashboard is redirected.
+* Tenant opening /admin/buildings/:id is redirected.
+* Owner opening /admin/subscription is redirected.
+* Unauthorised page content is not briefly rendered.
+* Backend still returns 403 if API endpoints are called directly.
+
+---
+
+## 35. Archived property UI tests
+
+Test:
+
+* Archived apartment disappears from owner dashboard.
+* Archived apartment disappears from tenant dashboard.
+* Administrator can still view it in an archived filter or history screen.
+* Restored apartment behaviour matches the documented access rule.
+
+---
+
+## 36. Billing UI tests
+
+Test:
+
+* Subscription page is completely hidden from owners.
+* Subscription page is completely hidden from tenants.
+* Administrator sees billable apartment count, not all unit types.
+* Garages and commercial units do not change displayed billing count.
+* Seeded configuration displays the correct plan and estimate.
+* Modified database pricing configuration changes new-month calculations without changing code.
+* Enterprise/custom pricing is clearly displayed as custom, not €0.
+
+---
+
+# PART 9 — DEFECT TRACKING
+
+Use Claude’s original audit IDs:
+
+Critical:
+
+* C1
+* C2
+* C3
+* C4
+* C5
+* C6
+
+High:
+
+* H1
+* H2
+* H3
+* H4
+* H5
+
+Medium:
+
+* M1
+* M2
+* M3
+* M4
+
+Low:
+
+* L1
+* L2
+* L3
+
+For each item, report:
+
+* Status: fixed, deferred or still failing
+* Root cause
+* Files changed
+* Database migrations
+* Tests proving the fix
+* Remaining limitations
+
+Do not close an item without an automated test.
+
+---
+
+# PART 10 — REQUIRED DELIVERABLE
+
+When the correction cycle is complete, provide:
+
+1. Defect-by-defect table covering C1–C6, H1–H5, M1–M4 and L1–L3.
+2. Status of every item.
+3. Files changed for each fix.
+4. New and modified database tables.
+5. Database migrations added.
+6. Indexes and constraints added.
+7. Pricing configuration design.
+8. Company-specific override design.
+9. Platform super-administrator security design.
+10. Automated tests added.
+11. Exact test commands executed.
+12. Raw test output summary.
+13. Total passed tests.
+14. Total failed tests.
+15. Any skipped or flaky tests.
+16. Any remaining warnings or limitations.
+17. Confirmation that no commercial billing threshold or rate is hardcoded.
+18. Confirmation that only apartments currently count toward billing.
+19. Confirmation that historical pricing snapshots are immutable.
+20. Confirmation that code was pushed to GitHub.
+21. New Git commit hash.
+
+Do not continue to another product module after completing this correction cycle.
+
+Stop after presenting the results so Claude can conduct a second independent audit of the new commit.
