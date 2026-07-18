@@ -1,4 +1,5 @@
 import {
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -20,27 +21,40 @@ export const unitTypeEnum = pgEnum("unit_type", [
 
 export const unitStatusEnum = pgEnum("unit_status", ["active", "archived"]);
 
-export const unitsTable = pgTable("units", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  companyId: uuid("company_id")
-    .references(() => companiesTable.id)
-    .notNull(),
-  buildingId: uuid("building_id")
-    .references(() => buildingsTable.id)
-    .notNull(),
-  unitNumber: text("unit_number").notNull(),
-  unitType: unitTypeEnum("unit_type").default("apartment").notNull(),
-  floor: integer("floor"),
-  status: unitStatusEnum("status").default("active").notNull(),
-  activatedAt: timestamp("activated_at", { withTimezone: true }),
-  archivedAt: timestamp("archived_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const unitsTable = pgTable(
+  "units",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id")
+      .references(() => companiesTable.id)
+      .notNull(),
+    buildingId: uuid("building_id")
+      .references(() => buildingsTable.id)
+      .notNull(),
+    unitNumber: text("unit_number").notNull(),
+    unitType: unitTypeEnum("unit_type").default("apartment").notNull(),
+    floor: integer("floor"),
+    status: unitStatusEnum("status").default("active").notNull(),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    /** M2: Billing queries filter by companyId + status + unitType. */
+    index("idx_units_company_status_type").on(
+      t.companyId,
+      t.status,
+      t.unitType,
+    ),
+    /** M2: Building detail page loads units by building + status. */
+    index("idx_units_building_status").on(t.buildingId, t.status),
+  ],
+);
 
 export const insertUnitSchema = createInsertSchema(unitsTable).omit({
   id: true,

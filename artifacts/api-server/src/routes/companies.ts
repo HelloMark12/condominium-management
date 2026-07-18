@@ -8,7 +8,6 @@ import {
   unitsTable,
   unitMembershipsTable,
   monthlyUsageRecordsTable,
-  pricingConfigTable,
 } from "@workspace/db";
 import {
   requireAuth,
@@ -21,75 +20,104 @@ import {
   type CompanyRequest,
 } from "../middlewares/company";
 import {
+  getActivePricingConfig,
+  getCompanyPricingOverride,
   calculateTier,
   calculateEstimatedAmountCents,
   getCurrentBillingMonth,
-  DEFAULT_RATE_PER_UNIT_CENTS,
-  FREE_UNIT_LIMIT,
 } from "../lib/billing";
 
 const router = Router();
 
-/**
- * POST /companies
- * Register a new condominium administration company.
- * The authenticated user becomes the first administrator.
- */
-router.post(
-  "/companies",
-  requireAuth,
-  resolveUser,
-  async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
-    const { name } = req.body as { name?: string };
+// ── Helper: generate a unique slug ────────────────────────────────────────────
 
-    if (!name?.trim()) {
-      res.status(400).json({ error: "Company name is required" });
-      return;
-    }
+async function generateUniqueSlug(name: string): Promise<string> {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 
+  const [existing] = await db
+    .select({ id: companiesTable.id })
+    .from(companiesTable)
+    .where(eq(companiesTable.slug, base))
+    .limit(1);
+
+  if (!existing) return base;
+
+  // Append a short random suffix to avoid collision (M3 FIX)
+  const suffix = Math.random().toString(36).slice(2, 7);
+  return `${base}-${suffix}`;
+}
+
+// ── POST /companies ────────────────────────────────────────────────────────────
+
+router.post("/companies", requireAuth, resolveUser, async (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const { name } = req.body as { name?: string };
+
+  if (!name?.trim()) {
+    res.status(400).json({ error: "Company name is required" });
+    return;
+  }
+
+  try {
+    const slug = await generateUniqueSlug(name.trim());
+
+    let company;
     try {
-      const slug = name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "");
-
-      const [company] = await db
+      [company] = await db
         .insert(companiesTable)
         .values({ name: name.trim(), slug })
         .returning();
-
-      await db.insert(companyMembershipsTable).values({
-        companyId: company.id,
-        userId: authReq.user.id,
-        role: "administrator",
-      });
-
-      // Initialise the first monthly usage record
-      const billingMonth = getCurrentBillingMonth();
-      const rate = DEFAULT_RATE_PER_UNIT_CENTS;
-      await db.insert(monthlyUsageRecordsTable).values({
-        companyId: company.id,
-        billingMonth,
-        activeUnitCount: 0,
-        peakActiveUnitCount: 0,
-        subscriptionTier: "free",
-        ratePerUnitCents: rate,
-        estimatedAmountCents: 0,
-        invoiceStatus: "open",
-      }).onConflictDoNothing();
-
-      res.status(201).json(company);
-    } catch (err) {
-      req.log.error({ err }, "POST /companies error");
-      res.status(500).json({ error: "Internal server error" });
+    } catch (insertErr: unknown) {
+      // M3 FIX: detect unique constraint violation on slug and return 409
+      const pgErr = insertErr as { code?: string };
+      if (pgErr?.code === "23505") {
+        res.status(409).json({ error: "A company with this name already exists" });
+        return;
+      }
+      throw insertErr;
     }
-  },
-);
 
-/**
- * GET /companies/:companyId
- */
+    // Add creator as administrator
+    await db.insert(companyMembershipsTable).values({
+      companyId: company.id,
+      userId: authReq.user.id,
+      role: "administrator",
+    });
+
+    res.status(201).json(company);
+  } catch (err) {
+    req.log.error({ err }, "POST /companies error");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /companies ─────────────────────────────────────────────────────────────
+
+router.get("/companies", requireAuth, resolveUser, async (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+
+  try {
+    const memberships = await db
+      .select({ company: companiesTable })
+      .from(companyMembershipsTable)
+      .innerJoin(
+        companiesTable,
+        eq(companyMembershipsTable.companyId, companiesTable.id),
+      )
+      .where(eq(companyMembershipsTable.userId, authReq.user.id));
+
+    res.json(memberships.map((m) => m.company));
+  } catch (err) {
+    req.log.error({ err }, "GET /companies error");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /companies/:companyId ──────────────────────────────────────────────────
+
 router.get(
   "/companies/:companyId",
   requireAuth,
@@ -101,9 +129,8 @@ router.get(
   },
 );
 
-/**
- * PATCH /companies/:companyId
- */
+// ── PATCH /companies/:companyId ────────────────────────────────────────────────
+
 router.patch(
   "/companies/:companyId",
   requireAuth,
@@ -114,28 +141,28 @@ router.patch(
     const companyReq = req as CompanyRequest;
     const { name } = req.body as { name?: string };
 
+    if (!name?.trim()) {
+      res.status(400).json({ error: "Company name is required" });
+      return;
+    }
+
     try {
       const [updated] = await db
         .update(companiesTable)
-        .set({
-          ...(name ? { name: name.trim() } : {}),
-          updatedAt: new Date(),
-        })
+        .set({ name: name.trim(), updatedAt: new Date() })
         .where(eq(companiesTable.id, companyReq.company.id))
         .returning();
 
       res.json(updated);
     } catch (err) {
-      req.log.error({ err }, "PATCH /companies error");
+      req.log.error({ err }, "PATCH /companies/:id error");
       res.status(500).json({ error: "Internal server error" });
     }
   },
 );
 
-/**
- * GET /companies/:companyId/dashboard
- * Administrator dashboard summary.
- */
+// ── GET /companies/:companyId/dashboard ───────────────────────────────────────
+
 router.get(
   "/companies/:companyId/dashboard",
   requireAuth,
@@ -144,107 +171,37 @@ router.get(
   requireAdmin,
   async (req, res) => {
     const companyReq = req as CompanyRequest;
-    const companyId = companyReq.company.id;
 
     try {
       const [buildingCount] = await db
         .select({ count: count() })
         .from(buildingsTable)
-        .where(eq(buildingsTable.companyId, companyId));
+        .where(eq(buildingsTable.companyId, companyReq.company.id));
 
-      const [activeUnitCount] = await db
+      const [unitCount] = await db
         .select({ count: count() })
         .from(unitsTable)
         .where(
           and(
-            eq(unitsTable.companyId, companyId),
+            eq(unitsTable.companyId, companyReq.company.id),
             eq(unitsTable.status, "active"),
           ),
         );
 
-      const [archivedUnitCount] = await db
-        .select({ count: count() })
-        .from(unitsTable)
-        .where(
-          and(
-            eq(unitsTable.companyId, companyId),
-            eq(unitsTable.status, "archived"),
-          ),
-        );
-
-      const [activeOwnerCount] = await db
+      const [pendingInvitations] = await db
         .select({ count: count() })
         .from(unitMembershipsTable)
         .where(
           and(
-            eq(unitMembershipsTable.companyId, companyId),
-            eq(unitMembershipsTable.role, "owner"),
-            eq(unitMembershipsTable.status, "active"),
-          ),
-        );
-
-      const [activeTenantCount] = await db
-        .select({ count: count() })
-        .from(unitMembershipsTable)
-        .where(
-          and(
-            eq(unitMembershipsTable.companyId, companyId),
-            eq(unitMembershipsTable.role, "tenant"),
-            eq(unitMembershipsTable.status, "active"),
-          ),
-        );
-
-      const [pendingOwnerCount] = await db
-        .select({ count: count() })
-        .from(unitMembershipsTable)
-        .where(
-          and(
-            eq(unitMembershipsTable.companyId, companyId),
-            eq(unitMembershipsTable.role, "owner"),
+            eq(unitMembershipsTable.companyId, companyReq.company.id),
             eq(unitMembershipsTable.status, "pending"),
           ),
         );
-
-      const [pendingTenantCount] = await db
-        .select({ count: count() })
-        .from(unitMembershipsTable)
-        .where(
-          and(
-            eq(unitMembershipsTable.companyId, companyId),
-            eq(unitMembershipsTable.role, "tenant"),
-            eq(unitMembershipsTable.status, "pending"),
-          ),
-        );
-
-      // Current billing month usage
-      const billingMonth = getCurrentBillingMonth();
-      const [usageRecord] = await db
-        .select()
-        .from(monthlyUsageRecordsTable)
-        .where(
-          and(
-            eq(monthlyUsageRecordsTable.companyId, companyId),
-            eq(monthlyUsageRecordsTable.billingMonth, billingMonth),
-          ),
-        )
-        .limit(1);
-
-      const peak = usageRecord?.peakActiveUnitCount ?? 0;
-      const tier = calculateTier(peak);
-      const rate = usageRecord?.ratePerUnitCents ?? DEFAULT_RATE_PER_UNIT_CENTS;
-      const estimated = calculateEstimatedAmountCents(peak, rate, tier);
 
       res.json({
-        totalBuildings: Number(buildingCount?.count ?? 0),
-        totalActiveUnits: Number(activeUnitCount?.count ?? 0),
-        totalArchivedUnits: Number(archivedUnitCount?.count ?? 0),
-        totalActiveOwners: Number(activeOwnerCount?.count ?? 0),
-        totalActiveTenants: Number(activeTenantCount?.count ?? 0),
-        pendingOwnerInvitations: Number(pendingOwnerCount?.count ?? 0),
-        pendingTenantInvitations: Number(pendingTenantCount?.count ?? 0),
-        currentPlan: tier,
-        estimatedMonthlyChargeCents: estimated,
-        peakActiveUnitCount: peak,
+        buildingCount: Number(buildingCount?.count ?? 0),
+        activeUnitCount: Number(unitCount?.count ?? 0),
+        pendingInvitationCount: Number(pendingInvitations?.count ?? 0),
       });
     } catch (err) {
       req.log.error({ err }, "GET /companies/:id/dashboard error");
@@ -253,10 +210,9 @@ router.get(
   },
 );
 
-/**
- * GET /companies/:companyId/subscription
- * Administrator only — billing information.
- */
+// ── GET /companies/:companyId/subscription ─────────────────────────────────────
+// H4 FIX: reads pricing from DB; no hardcoded commercial constants.
+
 router.get(
   "/companies/:companyId/subscription",
   requireAuth,
@@ -265,35 +221,66 @@ router.get(
   requireAdmin,
   async (req, res) => {
     const companyReq = req as CompanyRequest;
-    const companyId = companyReq.company.id;
 
     try {
       const billingMonth = getCurrentBillingMonth();
-      const [usageRecord] = await db
-        .select()
-        .from(monthlyUsageRecordsTable)
-        .where(
-          and(
-            eq(monthlyUsageRecordsTable.companyId, companyId),
-            eq(monthlyUsageRecordsTable.billingMonth, billingMonth),
-          ),
-        )
-        .limit(1);
 
+      // Active apartment count for billing
       const [activeUnitCount] = await db
         .select({ count: count() })
         .from(unitsTable)
         .where(
           and(
-            eq(unitsTable.companyId, companyId),
+            eq(unitsTable.companyId, companyReq.company.id),
             eq(unitsTable.status, "active"),
+            eq(unitsTable.unitType, "apartment"),
           ),
         );
 
-      const peak = usageRecord?.peakActiveUnitCount ?? 0;
-      const tier = calculateTier(peak);
-      const rate = usageRecord?.ratePerUnitCents ?? DEFAULT_RATE_PER_UNIT_CENTS;
-      const estimated = calculateEstimatedAmountCents(peak, rate, tier);
+      // This month's usage record (peak)
+      const [usage] = await db
+        .select()
+        .from(monthlyUsageRecordsTable)
+        .where(
+          and(
+            eq(monthlyUsageRecordsTable.companyId, companyReq.company.id),
+            eq(monthlyUsageRecordsTable.billingMonth, billingMonth),
+          ),
+        )
+        .limit(1);
+
+      const peak = usage?.peakActiveUnitCount ?? Number(activeUnitCount?.count ?? 0);
+
+      // H4 FIX: read pricing config from DB
+      let config;
+      let override;
+      try {
+        config = await getActivePricingConfig(billingMonth);
+        override = await getCompanyPricingOverride(
+          companyReq.company.id,
+          billingMonth,
+        );
+      } catch {
+        // No pricing config seeded yet — return minimal response
+        res.json({
+          currentPlan: companyReq.company.subscriptionTier,
+          activeUnitCount: Number(activeUnitCount?.count ?? 0),
+          peakActiveUnitCount: peak,
+          ratePerUnitCents: null,
+          estimatedAmountCents: null,
+          billingMonth,
+          enterpriseFlagged: companyReq.company.enterpriseFlagged,
+          freeUnitLimit: null,
+          pricingConfigured: false,
+        });
+        return;
+      }
+
+      const tier = calculateTier(peak, config, override);
+      const estimated = calculateEstimatedAmountCents(peak, config, override);
+      const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
+      const freeLimit =
+        override?.customFreeUnitLimit ?? config.freeUnitLimit;
 
       res.json({
         currentPlan: tier,
@@ -303,7 +290,15 @@ router.get(
         estimatedAmountCents: estimated,
         billingMonth,
         enterpriseFlagged: companyReq.company.enterpriseFlagged,
-        freeUnitLimit: FREE_UNIT_LIMIT,
+        freeUnitLimit: freeLimit,
+        pricingConfigured: true,
+        snapshotConfig: {
+          freeUnitLimit: config.freeUnitLimit,
+          standardMin: config.standardMin,
+          standardMax: config.standardMax,
+          enterpriseStart: config.enterpriseStart,
+          currency: config.currency,
+        },
       });
     } catch (err) {
       req.log.error({ err }, "GET /companies/:id/subscription error");
@@ -312,10 +307,8 @@ router.get(
   },
 );
 
-/**
- * GET /companies/:companyId/usage
- * Monthly usage history — administrator only.
- */
+// ── GET /companies/:companyId/usage ───────────────────────────────────────────
+
 router.get(
   "/companies/:companyId/usage",
   requireAuth,
@@ -324,7 +317,13 @@ router.get(
   requireAdmin,
   async (req, res) => {
     const companyReq = req as CompanyRequest;
-    const limit = Math.min(Number(req.query["limit"] ?? 12), 36);
+
+    // M4 FIX: validate and bound the limit parameter
+    const rawLimit = Number(req.query["limit"] ?? 12);
+    const limit =
+      Number.isFinite(rawLimit) && rawLimit > 0
+        ? Math.min(Math.floor(rawLimit), 36)
+        : 12;
 
     try {
       const records = await db

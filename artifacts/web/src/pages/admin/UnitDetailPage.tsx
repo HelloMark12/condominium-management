@@ -84,7 +84,7 @@ export default function UnitDetailPage() {
   const handleRevoke = (membershipId: string, role: string) => {
     if (confirm(`Are you sure you want to remove this ${role}?`)) {
       revokeMembership.mutate(
-        { id: membershipId },
+        { membershipId },
         {
           onSuccess: () => {
             toast({ title: `${role} removed` });

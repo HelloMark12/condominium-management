@@ -24,7 +24,7 @@ export default function InvitationsPage() {
 
   const handleResend = (id: string) => {
     resendInvite.mutate(
-      { id },
+      { membershipId: id },
       {
         onSuccess: () => toast({ title: "Invitation resent successfully" }),
         onError: () => toast({ title: "Failed to resend", variant: "destructive" })
@@ -35,7 +35,7 @@ export default function InvitationsPage() {
   const handleRevoke = (id: string) => {
     if(confirm("Are you sure you want to cancel this invitation?")) {
       revokeInvite.mutate(
-        { id },
+        { membershipId: id },
         {
           onSuccess: () => {
             toast({ title: "Invitation cancelled" });

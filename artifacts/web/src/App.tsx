@@ -64,10 +64,10 @@ const clerkAppearance = {
     logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
   },
   variables: {
-    colorPrimary: "hsl(215 50% 23%)", // Deep ocean blue
-    colorBackground: "hsl(0 0% 100%)", // Card background
+    colorPrimary: "hsl(215 50% 23%)",
+    colorBackground: "hsl(0 0% 100%)",
     colorInput: "hsl(214 32% 91%)",
-    colorNeutral: "hsl(214 32% 91%)", // Borders
+    colorNeutral: "hsl(214 32% 91%)",
     fontFamily: "'Plus Jakarta Sans', sans-serif",
     borderRadius: "0.5rem",
   },
@@ -81,12 +81,56 @@ const clerkAppearance = {
 
 const queryClient = new QueryClient();
 
+// --- LOADING PLACEHOLDER ---
+
+function LoadingScreen() {
+  return (
+    <div className="min-h-[100dvh] flex items-center justify-center">
+      <div className="text-sm text-muted-foreground">Loading…</div>
+    </div>
+  );
+}
+
+// --- ROLE-BASED ROUTE GUARDS (C2 FIX) ---
+
+/**
+ * AdminGuard: only users with roleContext === 'admin' may access /admin/* routes.
+ * While loading, shows a loading screen to prevent flicker redirects.
+ * Non-admins are redirected to '/' which routes them to their correct portal.
+ */
+function AdminGuard({ children }: { children: React.ReactNode }) {
+  const { roleContext, isLoading } = useAppContext();
+  if (isLoading) return <LoadingScreen />;
+  if (roleContext !== 'admin') return <Redirect to="/" />;
+  return <>{children}</>;
+}
+
+/**
+ * OwnerGuard: only users with roleContext === 'owner' may access /owner/* routes.
+ */
+function OwnerGuard({ children }: { children: React.ReactNode }) {
+  const { roleContext, isLoading } = useAppContext();
+  if (isLoading) return <LoadingScreen />;
+  if (roleContext !== 'owner') return <Redirect to="/" />;
+  return <>{children}</>;
+}
+
+/**
+ * TenantGuard: only users with roleContext === 'tenant' may access /tenant/* routes.
+ */
+function TenantGuard({ children }: { children: React.ReactNode }) {
+  const { roleContext, isLoading } = useAppContext();
+  if (isLoading) return <LoadingScreen />;
+  if (roleContext !== 'tenant') return <Redirect to="/" />;
+  return <>{children}</>;
+}
+
 // --- ROUTING ---
 
 function HomeRedirect() {
   const { roleContext, isLoading, userContext } = useAppContext();
   
-  if (isLoading) return <div className="min-h-[100dvh] flex items-center justify-center">Loading...</div>;
+  if (isLoading) return <LoadingScreen />;
 
   return (
     <>
@@ -95,7 +139,11 @@ function HomeRedirect() {
         {roleContext === 'admin' && userContext?.adminCompanies.length! > 0 ? <Redirect to="/admin/dashboard" /> : null}
         {roleContext === 'owner' ? <Redirect to="/owner/home" /> : null}
         {roleContext === 'tenant' ? <Redirect to="/tenant/home" /> : null}
-        {roleContext === 'pending' ? <div className="min-h-[100dvh] flex items-center justify-center p-4 text-center">Your account is pending invitation.</div> : null}
+        {roleContext === 'pending' ? (
+          <div className="min-h-[100dvh] flex items-center justify-center p-4 text-center">
+            Your account is pending invitation.
+          </div>
+        ) : null}
       </Show>
       <Show when="signed-out">
         <LandingPage />
@@ -104,7 +152,6 @@ function HomeRedirect() {
   );
 }
 
-// Ensure local DB is synced with Clerk after successful sign-in
 function SyncUserEffect() {
   const { user, isLoaded, isSignedIn } = useUser();
   const syncUser = useSyncUser();
@@ -183,50 +230,56 @@ function AppRouter() {
                 <Show when="signed-in">
                   <SyncUserEffect />
                   <Switch>
-                    {/* Admin Portal */}
+                    {/* Admin Portal — C2 FIX: AdminGuard enforces role */}
                     <Route path="/onboarding" component={OnboardingPage} />
                     <Route path="/admin/*">
-                      <AdminLayout>
-                        <Switch>
-                          <Route path="/admin/dashboard" component={DashboardPage} />
-                          <Route path="/admin/buildings" component={BuildingsPage} />
-                          <Route path="/admin/buildings/new" component={CreateBuildingPage} />
-                          <Route path="/admin/buildings/:buildingId" component={BuildingDetailPage} />
-                          <Route path="/admin/units" component={UnitsPage} />
-                          <Route path="/admin/units/:unitId" component={UnitDetailPage} />
-                          <Route path="/admin/invitations" component={InvitationsPage} />
-                          <Route path="/admin/subscription" component={SubscriptionPage} />
-                          <Route path="/admin/settings" component={SettingsPage} />
-                          <Route component={NotFound} />
-                        </Switch>
-                      </AdminLayout>
+                      <AdminGuard>
+                        <AdminLayout>
+                          <Switch>
+                            <Route path="/admin/dashboard" component={DashboardPage} />
+                            <Route path="/admin/buildings" component={BuildingsPage} />
+                            <Route path="/admin/buildings/new" component={CreateBuildingPage} />
+                            <Route path="/admin/buildings/:buildingId" component={BuildingDetailPage} />
+                            <Route path="/admin/units" component={UnitsPage} />
+                            <Route path="/admin/units/:unitId" component={UnitDetailPage} />
+                            <Route path="/admin/invitations" component={InvitationsPage} />
+                            <Route path="/admin/subscription" component={SubscriptionPage} />
+                            <Route path="/admin/settings" component={SettingsPage} />
+                            <Route component={NotFound} />
+                          </Switch>
+                        </AdminLayout>
+                      </AdminGuard>
                     </Route>
 
-                    {/* Owner Portal */}
+                    {/* Owner Portal — C2 FIX: OwnerGuard enforces role */}
                     <Route path="/owner/*">
-                      <OwnerLayout>
-                        <Switch>
-                          <Route path="/owner/home" component={OwnerHomePage} />
-                          <Route path="/owner/apartments" component={OwnerApartmentsPage} />
-                          <Route path="/owner/apartments/:unitId" component={OwnerApartmentDetailPage} />
-                          <Route path="/owner/profile" component={OwnerProfilePage} />
-                          <Route component={NotFound} />
-                        </Switch>
-                      </OwnerLayout>
+                      <OwnerGuard>
+                        <OwnerLayout>
+                          <Switch>
+                            <Route path="/owner/home" component={OwnerHomePage} />
+                            <Route path="/owner/apartments" component={OwnerApartmentsPage} />
+                            <Route path="/owner/apartments/:unitId" component={OwnerApartmentDetailPage} />
+                            <Route path="/owner/profile" component={OwnerProfilePage} />
+                            <Route component={NotFound} />
+                          </Switch>
+                        </OwnerLayout>
+                      </OwnerGuard>
                     </Route>
 
-                    {/* Tenant Portal */}
+                    {/* Tenant Portal — C2 FIX: TenantGuard enforces role */}
                     <Route path="/tenant/*">
-                      <TenantLayout>
-                        <Switch>
-                          <Route path="/tenant/home" component={TenantHomePage} />
-                          <Route path="/tenant/apartment" component={TenantApartmentPage} />
-                          <Route path="/tenant/building" component={TenantBuildingPage} />
-                          <Route path="/tenant/notices" component={TenantNoticesPage} />
-                          <Route path="/tenant/profile" component={TenantProfilePage} />
-                          <Route component={NotFound} />
-                        </Switch>
-                      </TenantLayout>
+                      <TenantGuard>
+                        <TenantLayout>
+                          <Switch>
+                            <Route path="/tenant/home" component={TenantHomePage} />
+                            <Route path="/tenant/apartment" component={TenantApartmentPage} />
+                            <Route path="/tenant/building" component={TenantBuildingPage} />
+                            <Route path="/tenant/notices" component={TenantNoticesPage} />
+                            <Route path="/tenant/profile" component={TenantProfilePage} />
+                            <Route component={NotFound} />
+                          </Switch>
+                        </TenantLayout>
+                      </TenantGuard>
                     </Route>
                     
                     <Route component={NotFound} />

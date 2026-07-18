@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, ne, sql } from "drizzle-orm";
 import {
   db,
   unitsTable,
@@ -11,26 +11,51 @@ import {
 } from "@workspace/db";
 import { requireAuth, resolveUser, type AuthenticatedRequest } from "../middlewares/auth";
 import {
+  getActivePricingConfig,
+  getCompanyPricingOverride,
   calculateTier,
   calculateEstimatedAmountCents,
   getCurrentBillingMonth,
-  DEFAULT_RATE_PER_UNIT_CENTS,
-  STANDARD_MAX_UNITS,
 } from "../lib/billing";
 
 const router = Router();
 
-// ── Helper: update monthly usage after unit count changes ────────────────────
+// ── Helper: update monthly usage after unit count changes ─────────────────────
+// H4 FIX: reads pricing from DB; no hardcoded commercial constants.
+// Uses GREATEST() for atomic peak update to prevent race conditions.
+// Skips update if the record is already finalised.
 
 async function updateMonthlyUsage(
   companyId: string,
   currentActiveCount: number,
 ): Promise<void> {
   const billingMonth = getCurrentBillingMonth();
-  const rate = DEFAULT_RATE_PER_UNIT_CENTS;
 
-  // Get or create the usage record for this month
-  const existing = await db
+  let config;
+  let override;
+  try {
+    config = await getActivePricingConfig(billingMonth);
+    override = await getCompanyPricingOverride(companyId, billingMonth);
+  } catch (err) {
+    // No active pricing config — log and skip billing update.
+    // The unit operation itself still succeeds.
+    // An administrator must seed a pricing config before billing is calculated.
+    console.error(
+      `[billing] Cannot update monthly usage for company ${companyId}: ${(err as Error).message}`,
+    );
+    return;
+  }
+
+  const tier = calculateTier(currentActiveCount, config, override);
+  const estimated = calculateEstimatedAmountCents(
+    currentActiveCount,
+    config,
+    override,
+  );
+  const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
+
+  // Check for existing open record
+  const [existing] = await db
     .select()
     .from(monthlyUsageRecordsTable)
     .where(
@@ -41,65 +66,79 @@ async function updateMonthlyUsage(
     )
     .limit(1);
 
-  const newPeak = Math.max(
-    existing[0]?.peakActiveUnitCount ?? 0,
-    currentActiveCount,
-  );
-  const tier = calculateTier(newPeak);
-  const estimated = calculateEstimatedAmountCents(newPeak, rate, tier);
+  if (existing) {
+    if (existing.invoiceStatus === "finalised") {
+      // M3 of billing rules: finalised records must not be recalculated
+      return;
+    }
 
-  // Flag enterprise if ≥ 50 active
-  if (currentActiveCount > STANDARD_MAX_UNITS) {
-    await db
-      .update(companiesTable)
-      .set({ enterpriseFlagged: true, subscriptionTier: "enterprise", updatedAt: new Date() })
-      .where(eq(companiesTable.id, companyId));
-  } else if (currentActiveCount >= 3) {
-    await db
-      .update(companiesTable)
-      .set({ subscriptionTier: "standard", updatedAt: new Date() })
-      .where(eq(companiesTable.id, companyId));
-  } else {
-    await db
-      .update(companiesTable)
-      .set({ subscriptionTier: "free", updatedAt: new Date() })
-      .where(eq(companiesTable.id, companyId));
-  }
-
-  if (existing[0]) {
+    // Atomic GREATEST() update prevents race conditions in concurrent requests
     await db
       .update(monthlyUsageRecordsTable)
       .set({
         activeUnitCount: currentActiveCount,
-        peakActiveUnitCount: newPeak,
+        peakActiveUnitCount: sql`GREATEST(${monthlyUsageRecordsTable.peakActiveUnitCount}, ${currentActiveCount})`,
         subscriptionTier: tier,
         ratePerUnitCents: rate,
         estimatedAmountCents: estimated,
+        pricingConfigId: config.id,
+        companyOverrideId: override?.id ?? null,
+        snapshotFreeUnitLimit: config.freeUnitLimit,
+        snapshotStandardMin: config.standardMin,
+        snapshotStandardMax: config.standardMax,
+        snapshotEnterpriseStart: config.enterpriseStart,
+        snapshotRatePerUnitCents: config.ratePerUnitCents,
+        snapshotEnterpriseBehavior: config.enterprisePricingBehavior,
+        snapshotCurrency: config.currency,
         updatedAt: new Date(),
       })
       .where(
         and(
           eq(monthlyUsageRecordsTable.companyId, companyId),
           eq(monthlyUsageRecordsTable.billingMonth, billingMonth),
+          ne(monthlyUsageRecordsTable.invoiceStatus, "finalised"),
         ),
       );
   } else {
-    await db.insert(monthlyUsageRecordsTable).values({
-      companyId,
-      billingMonth,
-      activeUnitCount: currentActiveCount,
-      peakActiveUnitCount: newPeak,
-      subscriptionTier: tier,
-      ratePerUnitCents: rate,
-      estimatedAmountCents: estimated,
-      invoiceStatus: "open",
-    }).onConflictDoNothing();
+    await db
+      .insert(monthlyUsageRecordsTable)
+      .values({
+        companyId,
+        billingMonth,
+        activeUnitCount: currentActiveCount,
+        peakActiveUnitCount: currentActiveCount,
+        subscriptionTier: tier,
+        ratePerUnitCents: rate,
+        estimatedAmountCents: estimated,
+        invoiceStatus: "open",
+        pricingConfigId: config.id,
+        companyOverrideId: override?.id ?? null,
+        snapshotFreeUnitLimit: config.freeUnitLimit,
+        snapshotStandardMin: config.standardMin,
+        snapshotStandardMax: config.standardMax,
+        snapshotEnterpriseStart: config.enterpriseStart,
+        snapshotRatePerUnitCents: config.ratePerUnitCents,
+        snapshotEnterpriseBehavior: config.enterprisePricingBehavior,
+        snapshotCurrency: config.currency,
+      })
+      .onConflictDoNothing();
   }
+
+  // Update company tier for display (derived from DB config, not hardcoded)
+  await db
+    .update(companiesTable)
+    .set({
+      subscriptionTier: tier,
+      enterpriseFlagged: tier === "enterprise",
+      updatedAt: new Date(),
+    })
+    .where(eq(companiesTable.id, companyId));
 }
 
-// ── Helper: count active units for a company ─────────────────────────────────
+// ── Helper: count active apartments for a company ─────────────────────────────
+// Only unit_type = 'apartment' counts toward billing
 
-async function countActiveUnits(companyId: string): Promise<number> {
+async function countActiveApartments(companyId: string): Promise<number> {
   const [result] = await db
     .select({ count: count() })
     .from(unitsTable)
@@ -107,12 +146,13 @@ async function countActiveUnits(companyId: string): Promise<number> {
       and(
         eq(unitsTable.companyId, companyId),
         eq(unitsTable.status, "active"),
+        eq(unitsTable.unitType, "apartment"),
       ),
     );
   return Number(result?.count ?? 0);
 }
 
-// ── Helper: verify admin access for a unit ───────────────────────────────────
+// ── Helper: verify admin access for a unit ────────────────────────────────────
 
 async function requireUnitAdmin(
   userId: string,
@@ -139,15 +179,16 @@ router.post(
   resolveUser,
   async (req, res) => {
     const authReq = req as AuthenticatedRequest;
-    const buildingId = req.params.buildingId as string;
+    const buildingId = req.params["buildingId"] as string;
+
     const { unitNumber, unitType, floor } = req.body as {
       unitNumber?: string;
       unitType?: "apartment" | "garage" | "commercial" | "other";
-      floor?: number | null;
+      floor?: number;
     };
 
     if (!unitNumber?.trim()) {
-      res.status(400).json({ error: "Apartment number is required" });
+      res.status(400).json({ error: "Unit number is required" });
       return;
     }
 
@@ -163,29 +204,31 @@ router.post(
         return;
       }
 
+      // M1: enforce companyId consistency — unit must belong to the building's company
       const isAdmin = await requireUnitAdmin(authReq.user.id, building);
       if (!isAdmin) {
         res.status(403).json({ error: "Administrator access required" });
         return;
       }
 
-      const now = new Date();
       const [unit] = await db
         .insert(unitsTable)
         .values({
-          companyId: building.companyId,
+          companyId: building.companyId, // M1: always use building's companyId
           buildingId,
           unitNumber: unitNumber.trim(),
           unitType: unitType ?? "apartment",
           floor: floor ?? null,
           status: "active",
-          activatedAt: now,
+          activatedAt: new Date(),
         })
         .returning();
 
-      // Update billing peak (new active unit)
-      const activeCount = await countActiveUnits(building.companyId);
-      await updateMonthlyUsage(building.companyId, activeCount);
+      // Update billing only for apartments
+      if (unit.unitType === "apartment") {
+        const activeCount = await countActiveApartments(building.companyId);
+        await updateMonthlyUsage(building.companyId, activeCount);
+      }
 
       res.status(201).json(unit);
     } catch (err) {
@@ -199,7 +242,7 @@ router.post(
 
 router.get("/units/:unitId", requireAuth, resolveUser, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
-  const unitId = req.params.unitId as string;
+  const unitId = req.params["unitId"] as string;
 
   try {
     const [unit] = await db
@@ -213,15 +256,21 @@ router.get("/units/:unitId", requireAuth, resolveUser, async (req, res) => {
       return;
     }
 
-    const [building] = await db
-      .select()
-      .from(buildingsTable)
-      .where(eq(buildingsTable.id, unit.buildingId))
-      .limit(1);
-
-    // Authorization: admin of the company OR owner/tenant of this unit
+    // Admin access
     const isAdmin = await requireUnitAdmin(authReq.user.id, unit);
-    const [userMembership] = await db
+    if (isAdmin) {
+      res.json(unit);
+      return;
+    }
+
+    // C3 FIX: archived units do not grant owner/tenant access
+    if (unit.status !== "active") {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    // Owner/tenant with active membership on this active unit
+    const [membership] = await db
       .select()
       .from(unitMembershipsTable)
       .where(
@@ -233,42 +282,12 @@ router.get("/units/:unitId", requireAuth, resolveUser, async (req, res) => {
       )
       .limit(1);
 
-    if (!isAdmin && !userMembership) {
+    if (!membership) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
 
-    // Owner and tenant memberships
-    const [owner] = await db
-      .select()
-      .from(unitMembershipsTable)
-      .where(
-        and(
-          eq(unitMembershipsTable.unitId, unitId),
-          eq(unitMembershipsTable.role, "owner"),
-        ),
-      )
-      .orderBy(unitMembershipsTable.createdAt)
-      .limit(1);
-
-    const [tenant] = await db
-      .select()
-      .from(unitMembershipsTable)
-      .where(
-        and(
-          eq(unitMembershipsTable.unitId, unitId),
-          eq(unitMembershipsTable.role, "tenant"),
-          eq(unitMembershipsTable.status, "active"),
-        ),
-      )
-      .limit(1);
-
-    res.json({
-      ...unit,
-      building: building ?? null,
-      owner: owner ?? null,
-      tenant: tenant ?? null,
-    });
+    res.json(unit);
   } catch (err) {
     req.log.error({ err }, "GET /units/:id error");
     res.status(500).json({ error: "Internal server error" });
@@ -279,12 +298,7 @@ router.get("/units/:unitId", requireAuth, resolveUser, async (req, res) => {
 
 router.patch("/units/:unitId", requireAuth, resolveUser, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
-  const unitId = req.params.unitId as string;
-  const { unitNumber, unitType, floor } = req.body as Partial<{
-    unitNumber: string;
-    unitType: "apartment" | "garage" | "commercial" | "other";
-    floor: number | null;
-  }>;
+  const unitId = req.params["unitId"] as string;
 
   try {
     const [unit] = await db
@@ -303,6 +317,12 @@ router.patch("/units/:unitId", requireAuth, resolveUser, async (req, res) => {
       res.status(403).json({ error: "Administrator access required" });
       return;
     }
+
+    const { unitNumber, unitType, floor } = req.body as {
+      unitNumber?: string;
+      unitType?: "apartment" | "garage" | "commercial" | "other";
+      floor?: number | null;
+    };
 
     const [updated] = await db
       .update(unitsTable)
@@ -324,117 +344,113 @@ router.patch("/units/:unitId", requireAuth, resolveUser, async (req, res) => {
 
 // ── POST /units/:unitId/archive ───────────────────────────────────────────────
 
-router.post("/units/:unitId/archive", requireAuth, resolveUser, async (req, res) => {
-  const authReq = req as AuthenticatedRequest;
-  const unitId = req.params.unitId as string;
+router.post(
+  "/units/:unitId/archive",
+  requireAuth,
+  resolveUser,
+  async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const unitId = req.params["unitId"] as string;
 
-  try {
-    const [unit] = await db
-      .select()
-      .from(unitsTable)
-      .where(eq(unitsTable.id, unitId))
-      .limit(1);
+    try {
+      const [unit] = await db
+        .select()
+        .from(unitsTable)
+        .where(eq(unitsTable.id, unitId))
+        .limit(1);
 
-    if (!unit) {
-      res.status(404).json({ error: "Apartment not found" });
-      return;
+      if (!unit) {
+        res.status(404).json({ error: "Apartment not found" });
+        return;
+      }
+      if (unit.status === "archived") {
+        res.status(400).json({ error: "Apartment is already archived" });
+        return;
+      }
+
+      const isAdmin = await requireUnitAdmin(authReq.user.id, unit);
+      if (!isAdmin) {
+        res.status(403).json({ error: "Administrator access required" });
+        return;
+      }
+
+      const now = new Date();
+      const [updated] = await db
+        .update(unitsTable)
+        .set({ status: "archived", archivedAt: now, updatedAt: now })
+        .where(eq(unitsTable.id, unitId))
+        .returning();
+
+      // Update billing — archiving drops active count but never lowers peak
+      if (unit.unitType === "apartment") {
+        const activeCount = await countActiveApartments(unit.companyId);
+        await updateMonthlyUsage(unit.companyId, activeCount);
+      }
+
+      res.json(updated);
+    } catch (err) {
+      req.log.error({ err }, "POST /units/:id/archive error");
+      res.status(500).json({ error: "Internal server error" });
     }
-    if (unit.status === "archived") {
-      res.status(400).json({ error: "Apartment is already archived" });
-      return;
-    }
-
-    const isAdmin = await requireUnitAdmin(authReq.user.id, unit);
-    if (!isAdmin) {
-      res.status(403).json({ error: "Administrator access required" });
-      return;
-    }
-
-    const now = new Date();
-    const [updated] = await db
-      .update(unitsTable)
-      .set({ status: "archived", archivedAt: now, updatedAt: now })
-      .where(eq(unitsTable.id, unitId))
-      .returning();
-
-    // Update active count (peak is NOT reduced on archive)
-    const activeCount = await countActiveUnits(unit.companyId);
-    // Only update activeUnitCount, don't change peak
-    const billingMonth = getCurrentBillingMonth();
-    await db
-      .update(monthlyUsageRecordsTable)
-      .set({
-        activeUnitCount: activeCount,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(monthlyUsageRecordsTable.companyId, unit.companyId),
-          eq(monthlyUsageRecordsTable.billingMonth, billingMonth),
-        ),
-      );
-
-    // Update company tier based on current active count (not peak)
-    // Peak-based tier stays; active-count tier only affects current display
-    if (activeCount <= 2) {
-      await db.update(companiesTable).set({ subscriptionTier: "free", updatedAt: now })
-        .where(eq(companiesTable.id, unit.companyId));
-    } else if (activeCount <= STANDARD_MAX_UNITS) {
-      await db.update(companiesTable).set({ subscriptionTier: "standard", updatedAt: now })
-        .where(eq(companiesTable.id, unit.companyId));
-    }
-
-    res.json(updated);
-  } catch (err) {
-    req.log.error({ err }, "POST /units/:id/archive error");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+  },
+);
 
 // ── POST /units/:unitId/restore ───────────────────────────────────────────────
 
-router.post("/units/:unitId/restore", requireAuth, resolveUser, async (req, res) => {
-  const authReq = req as AuthenticatedRequest;
-  const unitId = req.params.unitId as string;
+router.post(
+  "/units/:unitId/restore",
+  requireAuth,
+  resolveUser,
+  async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const unitId = req.params["unitId"] as string;
 
-  try {
-    const [unit] = await db
-      .select()
-      .from(unitsTable)
-      .where(eq(unitsTable.id, unitId))
-      .limit(1);
+    try {
+      const [unit] = await db
+        .select()
+        .from(unitsTable)
+        .where(eq(unitsTable.id, unitId))
+        .limit(1);
 
-    if (!unit) {
-      res.status(404).json({ error: "Apartment not found" });
-      return;
+      if (!unit) {
+        res.status(404).json({ error: "Apartment not found" });
+        return;
+      }
+      if (unit.status === "active") {
+        res.status(400).json({ error: "Apartment is already active" });
+        return;
+      }
+
+      const isAdmin = await requireUnitAdmin(authReq.user.id, unit);
+      if (!isAdmin) {
+        res.status(403).json({ error: "Administrator access required" });
+        return;
+      }
+
+      const now = new Date();
+      const [updated] = await db
+        .update(unitsTable)
+        .set({
+          status: "active",
+          activatedAt: now,
+          archivedAt: null,
+          updatedAt: now,
+        })
+        .where(eq(unitsTable.id, unitId))
+        .returning();
+
+      // Update billing — count includes restored apartment, update peak if needed
+      if (unit.unitType === "apartment") {
+        const activeCount = await countActiveApartments(unit.companyId);
+        await updateMonthlyUsage(unit.companyId, activeCount);
+      }
+
+      res.json(updated);
+    } catch (err) {
+      req.log.error({ err }, "POST /units/:id/restore error");
+      res.status(500).json({ error: "Internal server error" });
     }
-    if (unit.status === "active") {
-      res.status(400).json({ error: "Apartment is already active" });
-      return;
-    }
-
-    const isAdmin = await requireUnitAdmin(authReq.user.id, unit);
-    if (!isAdmin) {
-      res.status(403).json({ error: "Administrator access required" });
-      return;
-    }
-
-    const now = new Date();
-    const [updated] = await db
-      .update(unitsTable)
-      .set({ status: "active", activatedAt: now, archivedAt: null, updatedAt: now })
-      .where(eq(unitsTable.id, unitId))
-      .returning();
-
-    // Update billing — count includes restored unit, update peak if needed
-    const activeCount = await countActiveUnits(unit.companyId);
-    await updateMonthlyUsage(unit.companyId, activeCount);
-
-    res.json(updated);
-  } catch (err) {
-    req.log.error({ err }, "POST /units/:id/restore error");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+  },
+);
 
 export default router;

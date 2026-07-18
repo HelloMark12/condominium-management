@@ -4,6 +4,8 @@ import {
   db,
   buildingsTable,
   unitsTable,
+  companyMembershipsTable,
+  unitMembershipsTable,
 } from "@workspace/db";
 import { requireAuth, resolveUser } from "../middlewares/auth";
 import {
@@ -15,9 +17,61 @@ import type { AuthenticatedRequest } from "../middlewares/auth";
 
 const router = Router();
 
+// ── C1 FIX: shared building-access helper ─────────────────────────────────────
 /**
- * GET /companies/:companyId/buildings
+ * Returns true if the user is:
+ *   (a) an administrator of the building's company, OR
+ *   (b) an owner or tenant with an active apartment in this building.
+ *
+ * Returns the building row so callers avoid a second DB round-trip.
  */
+async function resolveAndAuthorizeBuilding(
+  userId: string,
+  buildingId: string,
+): Promise<{ building: typeof buildingsTable.$inferSelect; authorized: boolean }> {
+  const [building] = await db
+    .select()
+    .from(buildingsTable)
+    .where(eq(buildingsTable.id, buildingId))
+    .limit(1);
+
+  if (!building) return { building: null as never, authorized: false };
+
+  // (a) Company admin
+  const [adminMembership] = await db
+    .select()
+    .from(companyMembershipsTable)
+    .where(
+      and(
+        eq(companyMembershipsTable.companyId, building.companyId),
+        eq(companyMembershipsTable.userId, userId),
+      ),
+    )
+    .limit(1);
+
+  if (adminMembership) return { building, authorized: true };
+
+  // (b) Active owner/tenant with an active apartment in this building
+  const [unitMembership] = await db
+    .select({ id: unitMembershipsTable.id })
+    .from(unitMembershipsTable)
+    .innerJoin(unitsTable, eq(unitMembershipsTable.unitId, unitsTable.id))
+    .where(
+      and(
+        eq(unitMembershipsTable.userId, userId),
+        eq(unitMembershipsTable.status, "active"),
+        eq(unitsTable.buildingId, buildingId),
+        eq(unitsTable.status, "active"),
+        eq(unitsTable.unitType, "apartment"),
+      ),
+    )
+    .limit(1);
+
+  return { building, authorized: !!unitMembership };
+}
+
+// ── GET /companies/:companyId/buildings ────────────────────────────────────────
+
 router.get(
   "/companies/:companyId/buildings",
   requireAuth,
@@ -41,9 +95,8 @@ router.get(
   },
 );
 
-/**
- * POST /companies/:companyId/buildings
- */
+// ── POST /companies/:companyId/buildings ───────────────────────────────────────
+
 router.post(
   "/companies/:companyId/buildings",
   requireAuth,
@@ -102,34 +155,32 @@ router.post(
   },
 );
 
-/**
- * GET /buildings/:buildingId
- * Accessible by administrators, and owners/tenants who have units in this building.
- */
+// ── GET /buildings/:buildingId ─────────────────────────────────────────────────
+// C1 FIX: authorization enforced via resolveAndAuthorizeBuilding
+
 router.get(
   "/buildings/:buildingId",
   requireAuth,
   resolveUser,
   async (req, res) => {
     const authReq = req as AuthenticatedRequest;
-    const buildingId = req.params.buildingId as string;
+    const buildingId = req.params["buildingId"] as string;
 
     try {
-      const [building] = await db
-        .select()
-        .from(buildingsTable)
-        .where(eq(buildingsTable.id, buildingId))
-        .limit(1);
+      const { building, authorized } = await resolveAndAuthorizeBuilding(
+        authReq.user.id,
+        buildingId,
+      );
 
       if (!building) {
         res.status(404).json({ error: "Building not found" });
         return;
       }
+      if (!authorized) {
+        res.status(403).json({ error: "Forbidden" });
+        return;
+      }
 
-      // Authorization: must be admin of this company OR have a unit in this building
-      // (resolved via unit_memberships in the unit routes; here we just return the building
-      // if the user has any company membership or unit membership for this company)
-      // For Stage 1, company context is resolved from the building's company
       const [activeUnitCount] = await db
         .select({ count: count() })
         .from(unitsTable)
@@ -162,25 +213,46 @@ router.get(
   },
 );
 
-/**
- * PATCH /buildings/:buildingId
- */
+// ── PATCH /buildings/:buildingId ───────────────────────────────────────────────
+// C1 FIX: authorization enforced; admin-only write operation
+
 router.patch(
   "/buildings/:buildingId",
   requireAuth,
   resolveUser,
   async (req, res) => {
-    const buildingId = req.params.buildingId as string;
+    const authReq = req as AuthenticatedRequest;
+    const buildingId = req.params["buildingId"] as string;
 
     try {
-      const [existing] = await db
+      const { building, authorized } = await resolveAndAuthorizeBuilding(
+        authReq.user.id,
+        buildingId,
+      );
+
+      if (!building) {
+        res.status(404).json({ error: "Building not found" });
+        return;
+      }
+      if (!authorized) {
+        res.status(403).json({ error: "Forbidden" });
+        return;
+      }
+
+      // PATCH is a write operation — must be company admin
+      const [adminMembership] = await db
         .select()
-        .from(buildingsTable)
-        .where(eq(buildingsTable.id, buildingId))
+        .from(companyMembershipsTable)
+        .where(
+          and(
+            eq(companyMembershipsTable.companyId, building.companyId),
+            eq(companyMembershipsTable.userId, authReq.user.id),
+          ),
+        )
         .limit(1);
 
-      if (!existing) {
-        res.status(404).json({ error: "Building not found" });
+      if (!adminMembership) {
+        res.status(403).json({ error: "Administrator access required" });
         return;
       }
 
@@ -192,15 +264,15 @@ router.patch(
         postcode,
         country,
         status,
-      } = req.body as Partial<{
-        name: string;
-        addressLine1: string | null;
-        addressLine2: string | null;
-        locality: string;
-        postcode: string | null;
-        country: string;
-        status: "active" | "inactive";
-      }>;
+      } = req.body as {
+        name?: string;
+        addressLine1?: string;
+        addressLine2?: string;
+        locality?: string;
+        postcode?: string;
+        country?: string;
+        status?: "active" | "inactive";
+      };
 
       const [updated] = await db
         .update(buildingsTable)
@@ -225,18 +297,33 @@ router.patch(
   },
 );
 
-/**
- * GET /buildings/:buildingId/units
- */
+// ── GET /buildings/:buildingId/units ───────────────────────────────────────────
+// C1 FIX: authorization enforced via resolveAndAuthorizeBuilding
+
 router.get(
   "/buildings/:buildingId/units",
   requireAuth,
   resolveUser,
   async (req, res) => {
-    const buildingId = req.params.buildingId as string;
+    const authReq = req as AuthenticatedRequest;
+    const buildingId = req.params["buildingId"] as string;
     const statusFilter = req.query["status"] as string | undefined;
 
     try {
+      const { building, authorized } = await resolveAndAuthorizeBuilding(
+        authReq.user.id,
+        buildingId,
+      );
+
+      if (!building) {
+        res.status(404).json({ error: "Building not found" });
+        return;
+      }
+      if (!authorized) {
+        res.status(403).json({ error: "Forbidden" });
+        return;
+      }
+
       const conditions = [eq(unitsTable.buildingId, buildingId)];
       if (statusFilter === "active") {
         conditions.push(eq(unitsTable.status, "active"));

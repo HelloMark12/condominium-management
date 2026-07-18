@@ -13,7 +13,8 @@ const router = Router();
 
 /**
  * GET /me/units
- * All apartments owned by the current user (across all companies).
+ * All active apartments owned by the current user (across all companies).
+ * C3 FIX: only units with status = 'active' are returned.
  */
 router.get("/me/units", requireAuth, resolveUser, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
@@ -35,6 +36,7 @@ router.get("/me/units", requireAuth, resolveUser, async (req, res) => {
           eq(unitMembershipsTable.userId, authReq.user.id),
           eq(unitMembershipsTable.role, "owner"),
           eq(unitMembershipsTable.status, "active"),
+          eq(unitsTable.status, "active"), // C3 FIX: archived units do not grant access
         ),
       );
 
@@ -48,6 +50,7 @@ router.get("/me/units", requireAuth, resolveUser, async (req, res) => {
 /**
  * GET /me/tenancy
  * The current user's active tenancy (null if not a tenant anywhere).
+ * C3 FIX: only units with status = 'active' are returned.
  */
 router.get("/me/tenancy", requireAuth, resolveUser, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
@@ -69,6 +72,7 @@ router.get("/me/tenancy", requireAuth, resolveUser, async (req, res) => {
           eq(unitMembershipsTable.userId, authReq.user.id),
           eq(unitMembershipsTable.role, "tenant"),
           eq(unitMembershipsTable.status, "active"),
+          eq(unitsTable.status, "active"), // C3 FIX: archived units do not grant access
         ),
       )
       .limit(1);

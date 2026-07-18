@@ -4,8 +4,8 @@ import { useGetAuthMe } from '@workspace/api-client-react';
 
 // The API's user context type (from the GET /auth/me response)
 interface UserContext {
-  user: { id: string; email: string; fullName: string | null };
-  adminCompanies: { id: string; name: string; slug: string | null; subscriptionTier: string; enterpriseFlagged: boolean }[];
+  user: { id: string; email: string; fullName?: string | null };
+  adminCompanies: { id: string; name: string; slug?: string | null; subscriptionTier: string; enterpriseFlagged: boolean }[];
   ownedUnits: unknown[];
   tenancy: unknown | null;
 }
@@ -24,6 +24,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { isSignedIn, isLoaded: clerkLoaded } = useAuth();
   const { data: userContext, isLoading: queryLoading } = useGetAuthMe({
     query: {
+      queryKey: ['auth', 'me'],
       enabled: !!(clerkLoaded && isSignedIn),
       retry: false,
     }

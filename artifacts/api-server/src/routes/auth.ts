@@ -1,6 +1,5 @@
 import { Router } from "express";
-import { getAuth } from "@clerk/express";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   db,
   usersTable,
@@ -34,7 +33,6 @@ router.post("/auth/sync", requireAuth, async (req, res) => {
       .limit(1);
 
     if (existing[0]) {
-      // Update if email/name changed
       const [updated] = await db
         .update(usersTable)
         .set({
@@ -65,12 +63,12 @@ router.post("/auth/sync", requireAuth, async (req, res) => {
 /**
  * GET /auth/me
  * Returns the current user with company and unit context.
+ * C3 FIX: only active apartments grant portal access.
  */
 router.get("/auth/me", requireAuth, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
 
   try {
-    // Find local user
     const [user] = await db
       .select()
       .from(usersTable)
@@ -94,7 +92,7 @@ router.get("/auth/me", requireAuth, async (req, res) => {
 
     const adminCompanies = adminMemberships.map((m) => m.company);
 
-    // Owned units (across all companies)
+    // C3 FIX: owned active apartments — filter unit.status = 'active' in SQL
     const ownerMemberships = await db
       .select({
         membership: unitMembershipsTable,
@@ -107,16 +105,15 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       .innerJoin(buildingsTable, eq(unitsTable.buildingId, buildingsTable.id))
       .innerJoin(companiesTable, eq(unitsTable.companyId, companiesTable.id))
       .where(
-        eq(unitMembershipsTable.userId, user.id),
-      )
-      .then((rows) =>
-        rows.filter(
-          (r) =>
-            r.membership.role === "owner" && r.membership.status === "active",
+        and(
+          eq(unitMembershipsTable.userId, user.id),
+          eq(unitMembershipsTable.role, "owner"),
+          eq(unitMembershipsTable.status, "active"),
+          eq(unitsTable.status, "active"), // C3 FIX: archived units do not grant access
         ),
       );
 
-    // Active tenancy
+    // C3 FIX: active tenancy — filter unit.status = 'active' in SQL
     const tenancyRows = await db
       .select({
         membership: unitMembershipsTable,
@@ -128,13 +125,15 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       .innerJoin(unitsTable, eq(unitMembershipsTable.unitId, unitsTable.id))
       .innerJoin(buildingsTable, eq(unitsTable.buildingId, buildingsTable.id))
       .innerJoin(companiesTable, eq(unitsTable.companyId, companiesTable.id))
-      .where(eq(unitMembershipsTable.userId, user.id))
-      .then((rows) =>
-        rows.filter(
-          (r) =>
-            r.membership.role === "tenant" && r.membership.status === "active",
+      .where(
+        and(
+          eq(unitMembershipsTable.userId, user.id),
+          eq(unitMembershipsTable.role, "tenant"),
+          eq(unitMembershipsTable.status, "active"),
+          eq(unitsTable.status, "active"), // C3 FIX: archived units do not grant access
         ),
-      );
+      )
+      .limit(1);
 
     const tenancy = tenancyRows[0] ?? null;
 

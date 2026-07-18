@@ -17,6 +17,18 @@ export function requireAuth(
   res: Response,
   next: NextFunction,
 ): void {
+  // In test environment, accept x-test-clerk-user-id header
+  if (process.env["NODE_ENV"] === "test") {
+    const testUserId = req.headers["x-test-clerk-user-id"] as string | undefined;
+    if (testUserId) {
+      (req as AuthenticatedRequest).clerkUserId = testUserId;
+      next();
+      return;
+    }
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
   const auth = getAuth(req);
   const clerkUserId = auth?.userId;
   if (!clerkUserId) {
@@ -45,6 +57,23 @@ export async function resolveUser(
       .limit(1);
 
     if (!user) {
+      // In test mode: auto-create user record from test header so fixtures work
+      if (process.env["NODE_ENV"] === "test") {
+        const [created] = await db
+          .insert(usersTable)
+          .values({
+            clerkUserId: authReq.clerkUserId,
+            email: `${authReq.clerkUserId}@test.example`,
+            fullName: "Test User",
+          })
+          .onConflictDoNothing()
+          .returning();
+        if (created) {
+          authReq.user = created;
+          next();
+          return;
+        }
+      }
       res.status(401).json({ error: "User not found. Please sync your account." });
       return;
     }

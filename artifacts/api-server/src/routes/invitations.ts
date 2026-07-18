@@ -55,9 +55,7 @@ router.get(
         .where(eq(unitMembershipsTable.companyId, companyReq.company.id))
         .then((rows) => {
           if (statusFilter === "all") return rows;
-          return rows.filter(
-            (r) => r.membership.status === statusFilter,
-          );
+          return rows.filter((r) => r.membership.status === statusFilter);
         });
 
       const result = memberships.map((r) => ({
@@ -82,7 +80,7 @@ router.post(
   resolveUser,
   async (req, res) => {
     const authReq = req as AuthenticatedRequest;
-    const unitId = req.params.unitId as string;
+    const unitId = req.params["unitId"] as string;
     const { invitedName, invitedEmail } = req.body as {
       invitedName?: string;
       invitedEmail?: string;
@@ -102,6 +100,14 @@ router.post(
 
       if (!unit) {
         res.status(404).json({ error: "Apartment not found" });
+        return;
+      }
+
+      // C4 FIX: block invitations to archived apartments
+      if (unit.status !== "active") {
+        res.status(422).json({
+          error: "Cannot send an invitation for an archived apartment",
+        });
         return;
       }
 
@@ -122,8 +128,8 @@ router.post(
         return;
       }
 
-      // Block if active or pending owner already exists
-      const [existingOwner] = await db
+      // Block if active or pending owner already exists (also enforced by DB partial unique index H1)
+      const existingOwnerRows = await db
         .select()
         .from(unitMembershipsTable)
         .where(
@@ -131,17 +137,16 @@ router.post(
             eq(unitMembershipsTable.unitId, unitId),
             eq(unitMembershipsTable.role, "owner"),
           ),
-        )
-        .then((rows) =>
-          rows.filter((r) =>
-            r.status === "active" || r.status === "pending",
-          ),
         );
+
+      const existingOwner = existingOwnerRows.find(
+        (r) => r.status === "active" || r.status === "pending",
+      );
 
       if (existingOwner) {
         res.status(409).json({
           error:
-            "An active or pending owner already exists for this apartment. Cancel the existing invitation first.",
+            "This apartment already has an active or pending owner. Revoke the existing one first.",
         });
         return;
       }
@@ -152,21 +157,15 @@ router.post(
         .values({
           unitId,
           companyId: unit.companyId,
-          invitedByUserId: authReq.user.id,
           role: "owner",
           status: "pending",
           invitedName: invitedName.trim(),
           invitedEmail: invitedEmail.trim().toLowerCase(),
+          invitedByUserId: authReq.user.id,
           invitationToken: token,
           invitationExpiresAt: expiryDate(),
         })
         .returning();
-
-      // Log the invitation link (email delivery to be added later)
-      req.log.info(
-        { token, unitId, invitedEmail },
-        `Owner invitation created. Accept link: /invite/accept/${token}`,
-      );
 
       res.status(201).json(membership);
     } catch (err) {
@@ -184,7 +183,7 @@ router.post(
   resolveUser,
   async (req, res) => {
     const authReq = req as AuthenticatedRequest;
-    const unitId = req.params.unitId as string;
+    const unitId = req.params["unitId"] as string;
     const { invitedName, invitedEmail } = req.body as {
       invitedName?: string;
       invitedEmail?: string;
@@ -207,43 +206,33 @@ router.post(
         return;
       }
 
-      // Must be active owner of this unit
-      const [ownerMembership] = await db
-        .select()
-        .from(unitMembershipsTable)
-        .where(
-          and(
-            eq(unitMembershipsTable.unitId, unitId),
-            eq(unitMembershipsTable.userId, authReq.user.id),
-            eq(unitMembershipsTable.role, "owner"),
-            eq(unitMembershipsTable.status, "active"),
-          ),
-        )
-        .limit(1);
-
-      // Also allow admin to invite tenant
-      const [adminMembership] = ownerMembership
-        ? [ownerMembership]
-        : await db
-            .select()
-            .from(companyMembershipsTable)
-            .where(
-              and(
-                eq(companyMembershipsTable.companyId, unit.companyId),
-                eq(companyMembershipsTable.userId, authReq.user.id),
-              ),
-            )
-            .limit(1);
-
-      if (!ownerMembership && !adminMembership) {
-        res.status(403).json({
-          error: "Only the apartment owner or an administrator can invite a tenant",
+      // C4 FIX: block invitations to archived apartments
+      if (unit.status !== "active") {
+        res.status(422).json({
+          error: "Cannot send an invitation for an archived apartment",
         });
         return;
       }
 
-      // Hard-block: no second tenant while active/pending already exists
-      const existingTenants = await db
+      // Must be company administrator
+      const [adminMembership] = await db
+        .select()
+        .from(companyMembershipsTable)
+        .where(
+          and(
+            eq(companyMembershipsTable.companyId, unit.companyId),
+            eq(companyMembershipsTable.userId, authReq.user.id),
+          ),
+        )
+        .limit(1);
+
+      if (!adminMembership) {
+        res.status(403).json({ error: "Administrator access required" });
+        return;
+      }
+
+      // Block if active or pending tenant already exists (also enforced by DB partial unique index H2)
+      const existingTenantRows = await db
         .select()
         .from(unitMembershipsTable)
         .where(
@@ -251,43 +240,35 @@ router.post(
             eq(unitMembershipsTable.unitId, unitId),
             eq(unitMembershipsTable.role, "tenant"),
           ),
-        )
-        .then((rows) =>
-          rows.filter((r) => r.status === "active" || r.status === "pending"),
         );
 
-      if (existingTenants.length > 0) {
+      const existingTenant = existingTenantRows.find(
+        (r) => r.status === "active" || r.status === "pending",
+      );
+
+      if (existingTenant) {
         res.status(409).json({
           error:
-            "An active tenant or pending tenant invitation already exists. Revoke it before inviting a new tenant.",
+            "This apartment already has an active or pending tenant. Revoke the existing one first.",
         });
         return;
       }
 
       const token = generateToken();
-      const invitedBy = ownerMembership
-        ? authReq.user.id
-        : authReq.user.id;
-
       const [membership] = await db
         .insert(unitMembershipsTable)
         .values({
           unitId,
           companyId: unit.companyId,
-          invitedByUserId: invitedBy,
           role: "tenant",
           status: "pending",
           invitedName: invitedName.trim(),
           invitedEmail: invitedEmail.trim().toLowerCase(),
+          invitedByUserId: authReq.user.id,
           invitationToken: token,
           invitationExpiresAt: expiryDate(),
         })
         .returning();
-
-      req.log.info(
-        { token, unitId, invitedEmail },
-        `Tenant invitation created. Accept link: /invite/accept/${token}`,
-      );
 
       res.status(201).json(membership);
     } catch (err) {
@@ -305,9 +286,10 @@ router.delete(
   resolveUser,
   async (req, res) => {
     const authReq = req as AuthenticatedRequest;
-    const membershipId = req.params.membershipId as string;
+    const membershipId = req.params["membershipId"] as string;
 
     try {
+      // H3: load exactly the target membership (scoped by ID)
       const [membership] = await db
         .select()
         .from(unitMembershipsTable)
@@ -319,86 +301,12 @@ router.delete(
         return;
       }
 
-      // Authorization: admin of the company OR owner of the unit (for tenant revocation)
-      const [adminMembership] = await db
-        .select()
-        .from(companyMembershipsTable)
-        .where(
-          and(
-            eq(companyMembershipsTable.companyId, membership.companyId),
-            eq(companyMembershipsTable.userId, authReq.user.id),
-          ),
-        )
-        .limit(1);
-
-      const [ownerMembership] =
-        membership.role === "tenant"
-          ? await db
-              .select()
-              .from(unitMembershipsTable)
-              .where(
-                and(
-                  eq(unitMembershipsTable.unitId, membership.unitId),
-                  eq(unitMembershipsTable.userId, authReq.user.id),
-                  eq(unitMembershipsTable.role, "owner"),
-                  eq(unitMembershipsTable.status, "active"),
-                ),
-              )
-              .limit(1)
-          : [undefined];
-
-      if (!adminMembership && !ownerMembership) {
-        res.status(403).json({ error: "Forbidden" });
+      if (membership.status === "revoked") {
+        res.status(409).json({ error: "Already revoked" });
         return;
       }
 
-      const now = new Date();
-      const [updated] = await db
-        .update(unitMembershipsTable)
-        .set({
-          status: "revoked",
-          revokedAt: now,
-          invitationToken: null,
-          updatedAt: now,
-        })
-        .where(eq(unitMembershipsTable.id, membershipId))
-        .returning();
-
-      res.json(updated);
-    } catch (err) {
-      req.log.error({ err }, "DELETE /unit-memberships/:id error");
-      res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
-
-// ── POST /unit-memberships/:membershipId/resend ───────────────────────────────
-
-router.post(
-  "/unit-memberships/:membershipId/resend",
-  requireAuth,
-  resolveUser,
-  async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
-    const membershipId = req.params.membershipId as string;
-
-    try {
-      const [membership] = await db
-        .select()
-        .from(unitMembershipsTable)
-        .where(eq(unitMembershipsTable.id, membershipId))
-        .limit(1);
-
-      if (!membership) {
-        res.status(404).json({ error: "Invitation not found" });
-        return;
-      }
-      if (membership.status !== "pending") {
-        res.status(400).json({ error: "Only pending invitations can be resent" });
-        return;
-      }
-
-      // Must be admin
+      // Must be company admin to revoke
       const [adminMembership] = await db
         .select()
         .from(companyMembershipsTable)
@@ -415,23 +323,82 @@ router.post(
         return;
       }
 
-      // Refresh token and expiry
-      const token = generateToken();
+      const now = new Date();
+      const [revoked] = await db
+        .update(unitMembershipsTable)
+        .set({
+          status: "revoked",
+          revokedAt: now,
+          invitationToken: null,
+          updatedAt: now,
+        })
+        .where(eq(unitMembershipsTable.id, membershipId)) // H3: scoped to exact target
+        .returning();
+
+      res.json(revoked);
+    } catch (err) {
+      req.log.error({ err }, "DELETE /unit-memberships/:id error");
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// ── POST /unit-memberships/:membershipId/resend ───────────────────────────────
+
+router.post(
+  "/unit-memberships/:membershipId/resend",
+  requireAuth,
+  resolveUser,
+  async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const membershipId = req.params["membershipId"] as string;
+
+    try {
+      const [membership] = await db
+        .select()
+        .from(unitMembershipsTable)
+        .where(eq(unitMembershipsTable.id, membershipId))
+        .limit(1);
+
+      if (!membership) {
+        res.status(404).json({ error: "Membership not found" });
+        return;
+      }
+
+      if (membership.status !== "pending") {
+        res.status(409).json({
+          error: "Only pending invitations can be resent",
+        });
+        return;
+      }
+
+      const [adminMembership] = await db
+        .select()
+        .from(companyMembershipsTable)
+        .where(
+          and(
+            eq(companyMembershipsTable.companyId, membership.companyId),
+            eq(companyMembershipsTable.userId, authReq.user.id),
+          ),
+        )
+        .limit(1);
+
+      if (!adminMembership) {
+        res.status(403).json({ error: "Administrator access required" });
+        return;
+      }
+
+      const newToken = generateToken();
       const now = new Date();
       const [updated] = await db
         .update(unitMembershipsTable)
         .set({
-          invitationToken: token,
+          invitationToken: newToken,
           invitationExpiresAt: expiryDate(),
           updatedAt: now,
         })
         .where(eq(unitMembershipsTable.id, membershipId))
         .returning();
-
-      req.log.info(
-        { token, membershipId },
-        `Invitation resent. Accept link: /invite/accept/${token}`,
-      );
 
       res.json(updated);
     } catch (err) {
@@ -448,7 +415,7 @@ router.post("/invitations/accept", requireAuth, async (req, res) => {
   const { token } = req.body as { token?: string };
 
   if (!token?.trim()) {
-    res.status(400).json({ error: "Token is required" });
+    res.status(400).json({ error: "Invitation token is required" });
     return;
   }
 
@@ -456,15 +423,15 @@ router.post("/invitations/accept", requireAuth, async (req, res) => {
     const [membership] = await db
       .select()
       .from(unitMembershipsTable)
-      .where(eq(unitMembershipsTable.invitationToken, token))
+      .where(eq(unitMembershipsTable.invitationToken, token.trim()))
       .limit(1);
 
     if (!membership) {
-      res.status(400).json({ error: "Invalid or expired invitation link" });
+      res.status(404).json({ error: "Invalid or already used invitation token" });
       return;
     }
     if (membership.status === "revoked") {
-      res.status(400).json({ error: "This invitation has been cancelled" });
+      res.status(410).json({ error: "This invitation has been revoked" });
       return;
     }
     if (membership.status === "active") {
@@ -475,20 +442,48 @@ router.post("/invitations/accept", requireAuth, async (req, res) => {
       membership.invitationExpiresAt &&
       new Date() > membership.invitationExpiresAt
     ) {
-      res.status(400).json({ error: "This invitation has expired. Please ask for a new one." });
+      res.status(400).json({
+        error: "This invitation has expired. Please ask for a new one.",
+      });
       return;
     }
 
-    // Resolve or JIT-create local user
-    const clerkUserId = authReq.clerkUserId;
-    let [user] = await db
+    // C4 FIX: block accepting invitations for archived apartments
+    const [unit] = await db
+      .select()
+      .from(unitsTable)
+      .where(eq(unitsTable.id, membership.unitId))
+      .limit(1);
+
+    if (!unit || unit.status !== "active") {
+      res.status(422).json({
+        error: "This apartment has been archived and is no longer accepting invitations",
+      });
+      return;
+    }
+
+    // Resolve local user (must be synced)
+    const [user] = await db
       .select()
       .from(usersTable)
-      .where(eq(usersTable.clerkUserId, clerkUserId))
+      .where(eq(usersTable.clerkUserId, authReq.clerkUserId))
       .limit(1);
 
     if (!user) {
-      res.status(401).json({ error: "User not found. Call /auth/sync first." });
+      res.status(401).json({
+        error: "User not found. Call /auth/sync first.",
+      });
+      return;
+    }
+
+    // C5 FIX: verify that the accepting user's email matches the invited email (case-insensitive)
+    const acceptingEmail = user.email.toLowerCase().trim();
+    const invitedEmail = membership.invitedEmail.toLowerCase().trim();
+    if (acceptingEmail !== invitedEmail) {
+      res.status(403).json({
+        error:
+          "This invitation was sent to a different email address. Please sign in with the invited email.",
+      });
       return;
     }
 
@@ -499,7 +494,7 @@ router.post("/invitations/accept", requireAuth, async (req, res) => {
         userId: user.id,
         status: "active",
         activatedAt: now,
-        invitationToken: null, // single-use
+        invitationToken: null, // single-use: clear token on acceptance
         updatedAt: now,
       })
       .where(eq(unitMembershipsTable.id, membership.id))
