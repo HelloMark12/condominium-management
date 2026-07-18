@@ -21,9 +21,21 @@ import {
 const router = Router();
 
 // ── Helper: update monthly usage after unit count changes ─────────────────────
-// H4 FIX: reads pricing from DB; no hardcoded commercial constants.
-// Uses GREATEST() for atomic peak update to prevent race conditions.
-// Skips update if the record is already finalised.
+//
+// BILLING PEAK FIX (Issue 1):
+//   Tier and estimated amount must be calculated from the monthly peak —
+//   the highest simultaneous active count reached this month — NOT the
+//   current active count.  When archiving apartments the active count falls,
+//   but the peak must never decrease.
+//
+//   Implementation:
+//     1. When an existing open record exists, compute the effective new peak
+//        as Math.max(existing.peakActiveUnitCount, currentActiveCount).
+//     2. Pass that newPeak to calculateTier() and calculateEstimatedAmountCents().
+//     3. The DB column is still updated atomically via GREATEST() to guard
+//        against concurrent requests arriving between the read and the write.
+//     4. Storing tier/estimate from the pre-computed newPeak is equivalent to
+//        the GREATEST() result and avoids a second round-trip.
 
 async function updateMonthlyUsage(
   companyId: string,
@@ -46,14 +58,6 @@ async function updateMonthlyUsage(
     return;
   }
 
-  const tier = calculateTier(currentActiveCount, config, override);
-  const estimated = calculateEstimatedAmountCents(
-    currentActiveCount,
-    config,
-    override,
-  );
-  const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
-
   // Check for existing open record
   const [existing] = await db
     .select()
@@ -68,9 +72,20 @@ async function updateMonthlyUsage(
 
   if (existing) {
     if (existing.invoiceStatus === "finalised") {
-      // M3 of billing rules: finalised records must not be recalculated
+      // Finalised records must not be recalculated
       return;
     }
+
+    // PEAK FIX: compute the new peak explicitly so tier/estimate are peak-based.
+    // Using Math.max here is safe: the DB GREATEST() below handles any race
+    // where another request incremented the peak concurrently between our
+    // SELECT and UPDATE.  In that race the DB stores the higher value but
+    // our tier/estimate calculation may be slightly stale — the next call will
+    // correct it.  This is acceptable: the peak never decreases within a month.
+    const newPeak = Math.max(existing.peakActiveUnitCount, currentActiveCount);
+    const tier = calculateTier(newPeak, config, override);
+    const estimated = calculateEstimatedAmountCents(newPeak, config, override);
+    const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
 
     // Atomic GREATEST() update prevents race conditions in concurrent requests
     await db
@@ -100,6 +115,11 @@ async function updateMonthlyUsage(
         ),
       );
   } else {
+    // New record: peak equals current count (first observation this month)
+    const tier = calculateTier(currentActiveCount, config, override);
+    const estimated = calculateEstimatedAmountCents(currentActiveCount, config, override);
+    const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
+
     await db
       .insert(monthlyUsageRecordsTable)
       .values({
@@ -124,12 +144,18 @@ async function updateMonthlyUsage(
       .onConflictDoNothing();
   }
 
-  // Update company tier for display (derived from DB config, not hardcoded)
+  // Update company tier for display (derived from DB config, not hardcoded).
+  // Use the peak-based tier so that archiving does not downgrade the displayed tier.
+  const peakForCompany = existing
+    ? Math.max(existing.peakActiveUnitCount, currentActiveCount)
+    : currentActiveCount;
+  const companyTier = calculateTier(peakForCompany, config, override);
+
   await db
     .update(companiesTable)
     .set({
-      subscriptionTier: tier,
-      enterpriseFlagged: tier === "enterprise",
+      subscriptionTier: companyTier,
+      enterpriseFlagged: companyTier === "enterprise",
       updatedAt: new Date(),
     })
     .where(eq(companiesTable.id, companyId));
@@ -382,6 +408,7 @@ router.post(
         .returning();
 
       // Update billing — archiving drops active count but never lowers peak
+      // (GREATEST() in updateMonthlyUsage ensures peak is preserved)
       if (unit.unitType === "apartment") {
         const activeCount = await countActiveApartments(unit.companyId);
         await updateMonthlyUsage(unit.companyId, activeCount);

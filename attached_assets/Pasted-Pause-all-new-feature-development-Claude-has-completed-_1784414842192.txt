@@ -1,0 +1,294 @@
+Pause all new feature development.
+
+Claude has completed the second independent audit of commit eb320a7. The result is:
+
+Approved with minor corrections, but not yet approved to proceed to the next product module.
+
+Implement the remaining corrections below, add meaningful automated tests, run the complete suite in a clean environment and push a new commit to GitHub.
+
+Do not add notices, maintenance, documents, voting, payments, contractors or AI functionality during this cycle.
+
+# PRIORITY 1 — BILLING ACCURACY
+
+## 1. Fix current-count versus monthly-peak billing
+
+In:
+
+artifacts/api-server/src/routes/units.ts
+
+inside updateMonthlyUsage(), the tier and estimated amount are currently calculated using currentActiveCount.
+
+This is incorrect.
+
+The current billing month must always use the highest number of simultaneously active billable apartments reached during that month.
+
+Correct behaviour:
+
+1. Calculate or atomically update the monthly peak.
+2. Obtain the resulting peak value.
+3. Pass the monthly peak—not the current count—to:
+
+   * calculateTier()
+   * calculateEstimatedAmountCents()
+4. Store the resulting tier and estimate in monthly_usage_records.
+5. Ensure any company-level displayed tier is also based on the monthly peak or remove that duplicate source of truth.
+
+After a company reaches a peak of 10 apartments and later archives down to 2:
+
+* active apartment count = 2
+* monthly peak = 10
+* current-month tier remains based on 10
+* current-month estimate remains based on 10
+* GET /companies/:id/usage must return the peak-based tier and estimate
+* GET /auth/me must return the same peak-based administrator plan
+* GET /companies/:id/subscription must agree with both
+
+Add a regression test that performs this complete workflow through the real API and database.
+
+Do not merely test calculateTier() as a helper.
+
+# PRIORITY 2 — SAFE DATABASE UPGRADES
+
+## 2. Create one documented, non-interactive migration path
+
+The current upgrade workflow is ambiguous because drizzle-kit push asks whether pricing_config was renamed and fails without a TTY.
+
+Choose and document one supported production migration method.
+
+Recommended approach:
+
+* Use committed versioned SQL or generated Drizzle migration files for production upgrades.
+* Reserve drizzle-kit push for fresh development databases only.
+* Do not require interactive prompts in CI or deployment.
+
+The supported migration command must:
+
+* Run non-interactively
+* Return a non-zero exit code on failure
+* Be repeatable and documented
+* Work from a clean database
+* Work when upgrading from the schema at commit f41f867
+
+Add the exact upgrade command to the repository documentation.
+
+## 3. Handle existing duplicate owner and tenant records
+
+Before creating the partial unique indexes:
+
+* Detect apartments with more than one pending or active owner.
+* Detect apartments with more than one pending or active tenant.
+
+Do not allow the migration to fail with an unexplained raw unique-index error.
+
+Choose and document one strategy:
+
+Preferred safe strategy:
+
+* Abort before applying schema changes.
+* Print a clear report listing the affected unit IDs, relationship IDs, roles, statuses and invited emails.
+* Explain that the data must be resolved before rerunning the migration.
+
+Alternatively, automatically preserve the most recently activated relationship and revoke the others, but only if that behaviour is explicitly documented and tested.
+
+Wrap the migration in a proper transaction where possible.
+
+Test the upgrade path using:
+
+1. The old schema
+2. Duplicate active owner data
+3. Duplicate active tenant data
+4. A rerun after the duplicates are resolved
+5. A clean database
+
+# PRIORITY 3 — REPRODUCIBLE TEST ENVIRONMENT
+
+## 4. Remove the undocumented Clerk secret dependency
+
+The API test suite must run from a clean clone using only documented test configuration.
+
+Currently clerkMiddleware() is mounted unconditionally and the tests fail unless CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY are manually supplied.
+
+For NODE_ENV=test:
+
+* Bypass external Clerk JWT middleware completely; or
+* Provide a dedicated deterministic test authentication implementation.
+
+The test application must not contact Clerk or require valid-looking Clerk secrets.
+
+Do not weaken production authentication.
+
+Add or update documentation so a new developer can run:
+
+pnpm test
+
+against an isolated test database without pre-existing Replit secrets.
+
+After fixing this, prove it by running the complete test suite in a clean environment with:
+
+* NODE_ENV=test
+* DATABASE_URL for the isolated test database
+* No CLERK_PUBLISHABLE_KEY
+* No CLERK_SECRET_KEY
+* No inherited Replit secrets
+
+Show the environment variables used, excluding sensitive values.
+
+# PRIORITY 4 — REMAINING AUDIT ITEMS
+
+## 5. Translate duplicate relationship constraint failures into HTTP 409
+
+In invite-owner and invite-tenant:
+
+* Catch PostgreSQL error code 23505 for the partial unique indexes.
+* Return HTTP 409 with a clear application-level response.
+* Do not expose a raw 500 if two requests race.
+
+Keep the application-level pre-check, but the database remains the final enforcement layer.
+
+Add a genuine concurrency test using parallel requests.
+
+Expected result:
+
+* Exactly one invitation succeeds.
+* The other returns 409.
+* No duplicate rows exist.
+
+## 6. Enforce unit/building company consistency
+
+Add database-level or equally strong enforcement that:
+
+units.company_id = buildings.company_id
+
+for the referenced building.
+
+Preferred options:
+
+* Composite foreign key; or
+* PostgreSQL trigger.
+
+Application checks alone are insufficient.
+
+Add an integration test that attempts to create or modify an inconsistent record and proves the database rejects it.
+
+## 7. Use explicit Enterprise pricing behaviour
+
+Do not infer custom pricing from:
+
+currentPlan === 'enterprise' && estimatedAmountCents === 0
+
+Expose an explicit backend field such as:
+
+* enterprisePricingBehavior; or
+* chargeDisplayMode; or
+* isCustomPricing
+
+For the current subscription response, derive it from the applicable pricing configuration or company override.
+
+For historical usage rows, derive it from snapshotEnterpriseBehavior.
+
+Update billingDisplay.ts to use the explicit field.
+
+Test all of these separately:
+
+* Enterprise custom pricing with estimate 0 → “Custom pricing”
+* Enterprise fixed pricing with fixed rate 0 → display €0.00, not “Custom pricing”
+* Enterprise per-unit pricing with rate 0 → display €0.00, not “Custom pricing”
+* Enterprise fixed pricing with positive amount
+* Enterprise per-unit pricing with positive amount
+
+## 8. Replace vacuous billing and rollover tests
+
+Remove tests that can pass without making an assertion, including patterns such as:
+
+if (record) {
+expect(...)
+}
+
+Every test must fail when the expected record is missing.
+
+Replace the weak tests with API/database tests that:
+
+* Create apartments through the real route.
+* Confirm exact active count.
+* Confirm exact monthly peak.
+* Archive apartments.
+* Confirm the peak remains unchanged.
+* Confirm stored tier and amount remain peak-based.
+* Confirm garages and commercial units do not change billing.
+* Confirm finalised records cannot be mutated.
+* Confirm pricing snapshot fields are populated.
+
+Add a genuine concurrent apartment-creation test using multiple parallel POST requests.
+
+## 9. Expand archived-apartment tests
+
+Add tests covering all access surfaces:
+
+* GET /units/:id
+* GET /auth/me
+* GET /me/units
+* GET /me/tenancy
+* GET /buildings/:id when the user’s only relationship is an archived apartment
+* GET /buildings/:id/units under the same condition
+
+The user must lose building access if their only relevant relationship belongs to an archived apartment.
+
+## 10. Reconcile the correction report
+
+Update CORRECTION_CYCLE_REPORT.md so:
+
+* The per-suite test totals add up correctly.
+* The headline total matches the detailed table.
+* Every remaining issue is accurately described.
+* No item is marked fixed without a meaningful passing test.
+
+# TESTING REQUIREMENTS
+
+Run all tests against:
+
+* A real isolated PostgreSQL database
+* The real Express application
+* Distinct users and companies
+* No development or production data
+
+Run:
+
+* Database migration from a clean database
+* Database upgrade from the f41f867 schema
+* Duplicate-data migration test
+* API unit tests
+* API integration tests
+* Frontend tests
+* Concurrency tests
+* TypeScript typechecks
+* Production builds
+
+Do not use optional assertions that permit missing records.
+
+# REQUIRED FINAL RESPONSE
+
+When complete, provide:
+
+1. Status of all ten corrections above.
+2. Files changed.
+3. Schema and migration files added.
+4. Exact supported production migration command.
+5. Exact clean-install test command.
+6. Environment variables required for testing.
+7. Confirmation that Clerk secrets are not required in test mode.
+8. Exact test commands executed.
+9. Passed, failed and skipped test totals.
+10. Results of the concurrent invitation test.
+11. Results of the concurrent apartment-creation test.
+12. Results of the old-schema upgrade test.
+13. Results of the duplicate-data migration test.
+14. Typecheck results.
+15. Production build results.
+16. Updated CORRECTION_CYCLE_REPORT.md.
+17. Final Git commit hash.
+18. Confirmation that the commit was pushed to origin/main.
+19. Confirmation that the working tree is clean and synchronized.
+
+Do not proceed to the next product module.
+
+Stop after pushing the correction commit so Claude can perform a targeted third audit.

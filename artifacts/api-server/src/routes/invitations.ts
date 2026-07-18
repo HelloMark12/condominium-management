@@ -30,6 +30,27 @@ function expiryDate(): Date {
   return d;
 }
 
+/** PostgreSQL unique-violation error code. */
+const PG_UNIQUE_VIOLATION = "23505";
+
+/**
+ * Drizzle wraps the underlying pg error in a DrizzleQueryError whose `code`
+ * property is undefined at the top level; the PG error code lives on the
+ * `.cause` (or `.cause.cause`) of the wrapped error.  Walk the chain so that
+ * concurrent requests that bypass the application-level pre-check still get
+ * a 409 rather than a 500.
+ */
+function isPgUniqueViolation(err: unknown): boolean {
+  let current: unknown = err;
+  while (current != null && typeof current === "object") {
+    if ((current as Record<string, unknown>)["code"] === PG_UNIQUE_VIOLATION) {
+      return true;
+    }
+    current = (current as Record<string, unknown>)["cause"];
+  }
+  return false;
+}
+
 // ── GET /companies/:companyId/invitations ─────────────────────────────────────
 
 router.get(
@@ -128,7 +149,9 @@ router.post(
         return;
       }
 
-      // Block if active or pending owner already exists (also enforced by DB partial unique index H1)
+      // Application-level pre-check (H1): block if active or pending owner already exists.
+      // The database partial unique index is the final enforcement layer (Issue 5 fix:
+      // any race that bypasses this pre-check is caught as PG error 23505 → HTTP 409).
       const existingOwnerRows = await db
         .select()
         .from(unitMembershipsTable)
@@ -152,20 +175,36 @@ router.post(
       }
 
       const token = generateToken();
-      const [membership] = await db
-        .insert(unitMembershipsTable)
-        .values({
-          unitId,
-          companyId: unit.companyId,
-          role: "owner",
-          status: "pending",
-          invitedName: invitedName.trim(),
-          invitedEmail: invitedEmail.trim().toLowerCase(),
-          invitedByUserId: authReq.user.id,
-          invitationToken: token,
-          invitationExpiresAt: expiryDate(),
-        })
-        .returning();
+
+      // Issue 5 FIX: catch PostgreSQL 23505 (unique violation on partial index um_one_owner_per_unit)
+      // so that concurrent requests that both pass the application-level pre-check above do not
+      // produce a raw 500 — exactly one succeeds, the other gets 409.
+      let membership;
+      try {
+        [membership] = await db
+          .insert(unitMembershipsTable)
+          .values({
+            unitId,
+            companyId: unit.companyId,
+            role: "owner",
+            status: "pending",
+            invitedName: invitedName.trim(),
+            invitedEmail: invitedEmail.trim().toLowerCase(),
+            invitedByUserId: authReq.user.id,
+            invitationToken: token,
+            invitationExpiresAt: expiryDate(),
+          })
+          .returning();
+      } catch (insertErr: unknown) {
+        if (isPgUniqueViolation(insertErr)) {
+          res.status(409).json({
+            error:
+              "This apartment already has an active or pending owner. Revoke the existing one first.",
+          });
+          return;
+        }
+        throw insertErr;
+      }
 
       res.status(201).json(membership);
     } catch (err) {
@@ -231,7 +270,9 @@ router.post(
         return;
       }
 
-      // Block if active or pending tenant already exists (also enforced by DB partial unique index H2)
+      // Application-level pre-check (H2): block if active or pending tenant already exists.
+      // The database partial unique index is the final enforcement layer (Issue 5 fix:
+      // any race that bypasses this pre-check is caught as PG error 23505 → HTTP 409).
       const existingTenantRows = await db
         .select()
         .from(unitMembershipsTable)
@@ -255,20 +296,35 @@ router.post(
       }
 
       const token = generateToken();
-      const [membership] = await db
-        .insert(unitMembershipsTable)
-        .values({
-          unitId,
-          companyId: unit.companyId,
-          role: "tenant",
-          status: "pending",
-          invitedName: invitedName.trim(),
-          invitedEmail: invitedEmail.trim().toLowerCase(),
-          invitedByUserId: authReq.user.id,
-          invitationToken: token,
-          invitationExpiresAt: expiryDate(),
-        })
-        .returning();
+
+      // Issue 5 FIX: catch PostgreSQL 23505 (unique violation on partial index um_one_tenant_per_unit)
+      // so that concurrent requests that both pass the pre-check produce 409, not 500.
+      let membership;
+      try {
+        [membership] = await db
+          .insert(unitMembershipsTable)
+          .values({
+            unitId,
+            companyId: unit.companyId,
+            role: "tenant",
+            status: "pending",
+            invitedName: invitedName.trim(),
+            invitedEmail: invitedEmail.trim().toLowerCase(),
+            invitedByUserId: authReq.user.id,
+            invitationToken: token,
+            invitationExpiresAt: expiryDate(),
+          })
+          .returning();
+      } catch (insertErr: unknown) {
+        if (isPgUniqueViolation(insertErr)) {
+          res.status(409).json({
+            error:
+              "This apartment already has an active or pending tenant. Revoke the existing one first.",
+          });
+          return;
+        }
+        throw insertErr;
+      }
 
       res.status(201).json(membership);
     } catch (err) {

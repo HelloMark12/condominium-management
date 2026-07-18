@@ -1,7 +1,8 @@
 import { CreditCard, TrendingUp, AlertCircle, CheckCircle2, PhoneCall } from "lucide-react";
 import { 
   useGetCompanySubscription, getGetCompanySubscriptionQueryKey,
-  useGetCompanyUsageHistory, getGetCompanyUsageHistoryQueryKey
+  useGetCompanyUsageHistory, getGetCompanyUsageHistoryQueryKey,
+  type SubscriptionInfo,
 } from "@workspace/api-client-react";
 import { useAppContext } from "@/hooks/useAppContext";
 import {
@@ -17,16 +18,40 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 
+// The API response includes `isCustomPricing` and `enterprisePricingBehavior`
+// which are not yet in the Orval-generated types (pending schema regeneration).
+// We extend the generated type locally until the client is regenerated.
+type SubscriptionResponse = SubscriptionInfo & {
+  isCustomPricing?: boolean;
+  enterprisePricingBehavior?: string;
+};
+
+type UsageRecord = {
+  id: string;
+  billingMonth: string;
+  peakActiveUnitCount: number;
+  subscriptionTier: string | null;
+  ratePerUnitCents: number | null;
+  estimatedAmountCents: number | null;
+  finalAmountCents: number | null;
+  invoiceStatus: string;
+  isCustomPricing?: boolean;
+};
+
 export default function SubscriptionPage() {
   const { selectedCompanyId } = useAppContext();
   
-  const { data: sub, isLoading: subLoading, error } = useGetCompanySubscription(selectedCompanyId!, {
+  const { data: subRaw, isLoading: subLoading, error } = useGetCompanySubscription(selectedCompanyId!, {
     query: { enabled: !!selectedCompanyId, queryKey: getGetCompanySubscriptionQueryKey(selectedCompanyId!) }
   });
 
-  const { data: history, isLoading: historyLoading } = useGetCompanyUsageHistory(selectedCompanyId!, { limit: 12 }, {
+  const { data: historyRaw, isLoading: historyLoading } = useGetCompanyUsageHistory(selectedCompanyId!, { limit: 12 }, {
     query: { enabled: !!selectedCompanyId, queryKey: getGetCompanyUsageHistoryQueryKey(selectedCompanyId!, { limit: 12 }) }
   });
+
+  // Cast to extended types that include the new explicit isCustomPricing field
+  const sub = subRaw as SubscriptionResponse | undefined;
+  const history = historyRaw as UsageRecord[] | undefined;
 
   // Gated access check based on API spec
   if (error?.status === 403) {
@@ -38,6 +63,11 @@ export default function SubscriptionPage() {
   }
 
   if (!sub) return null;
+
+  // Issue 7 FIX: use the explicit isCustomPricing field from the API rather than
+  // inferring from plan + amount.  This correctly distinguishes enterprise/custom
+  // from enterprise/fixed or enterprise/per_unit when the rate happens to be zero.
+  const customPricing = sub.isCustomPricing ?? false;
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-8">
@@ -75,7 +105,7 @@ export default function SubscriptionPage() {
               </div>
               <div>
                 <div className="text-primary-foreground/70 text-sm mb-1">Estimated Charge</div>
-                {isEnterpriseCustom(sub.currentPlan, sub.estimatedAmountCents) ? (
+                {isEnterpriseCustom(customPricing) ? (
                   <div className="flex items-center gap-2" data-testid="enterprise-custom-charge">
                     <PhoneCall className="h-6 w-6 text-primary-foreground/80" />
                     <span className="text-xl font-semibold text-primary-foreground" data-testid="enterprise-custom-label">
@@ -84,7 +114,7 @@ export default function SubscriptionPage() {
                   </div>
                 ) : (
                   <div className="text-4xl font-bold flex items-baseline gap-2" data-testid="standard-charge">
-                    {formatEstimatedCharge(sub.currentPlan, sub.estimatedAmountCents)}
+                    {formatEstimatedCharge(sub.currentPlan, sub.estimatedAmountCents, customPricing)}
                     <span className="text-sm font-normal text-primary-foreground/60">this month</span>
                   </div>
                 )}
@@ -100,6 +130,7 @@ export default function SubscriptionPage() {
                     sub.peakActiveUnitCount,
                     sub.ratePerUnitCents,
                     sub.estimatedAmountCents,
+                    customPricing,
                   )}
                 </p>
               </div>
@@ -115,7 +146,7 @@ export default function SubscriptionPage() {
             <div className="flex justify-between items-center py-3 border-b border-border">
               <span className="text-muted-foreground">Rate per unit</span>
               <span className="font-semibold" data-testid="rate-per-unit">
-                {isEnterpriseCustom(sub.currentPlan, sub.estimatedAmountCents)
+                {isEnterpriseCustom(customPricing)
                   ? "Custom"
                   : `€${((sub.ratePerUnitCents ?? 0) / 100).toFixed(2)}`}
               </span>
@@ -167,10 +198,20 @@ export default function SubscriptionPage() {
                       <td className="px-4 py-3 font-medium">{format(new Date(record.billingMonth), 'MMM yyyy')}</td>
                       <td className="px-4 py-3">{record.peakActiveUnitCount}</td>
                       <td className="px-4 py-3 text-muted-foreground">
-                        {formatHistoryRate(record.subscriptionTier, record.estimatedAmountCents, record.ratePerUnitCents)}
+                        {formatHistoryRate(
+                          record.subscriptionTier,
+                          record.estimatedAmountCents,
+                          record.ratePerUnitCents,
+                          record.isCustomPricing,
+                        )}
                       </td>
                       <td className="px-4 py-3 font-semibold">
-                        {formatHistoryAmount(record.subscriptionTier, record.estimatedAmountCents, record.finalAmountCents)}
+                        {formatHistoryAmount(
+                          record.subscriptionTier,
+                          record.estimatedAmountCents,
+                          record.finalAmountCents,
+                          record.isCustomPricing,
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <Badge variant={record.invoiceStatus === 'finalised' ? 'default' : 'secondary'} className="capitalize">

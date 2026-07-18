@@ -40,14 +40,20 @@ app.use(cors({ credentials: true, origin: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY,
-    ),
-  })),
-);
+// Skip Clerk JWT middleware in test environment.
+// Tests use the x-test-clerk-user-id header instead (see middlewares/auth.ts).
+// This allows the full test suite to run without CLERK_PUBLISHABLE_KEY or
+// CLERK_SECRET_KEY.  Production authentication is NOT weakened.
+if (process.env["NODE_ENV"] !== "test") {
+  app.use(
+    clerkMiddleware((req) => ({
+      publishableKey: publishableKeyFromHost(
+        getClerkProxyHost(req) ?? "",
+        process.env.CLERK_PUBLISHABLE_KEY,
+      ),
+    })),
+  );
+}
 
 app.use("/api", router);
 

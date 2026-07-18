@@ -212,6 +212,9 @@ router.get(
 
 // ── GET /companies/:companyId/subscription ─────────────────────────────────────
 // H4 FIX: reads pricing from DB; no hardcoded commercial constants.
+// Issue 7 FIX: exposes explicit isCustomPricing field derived from
+// enterprisePricingBehavior in the pricing config — do not infer from
+// estimatedAmountCents === 0 in the frontend.
 
 router.get(
   "/companies/:companyId/subscription",
@@ -226,7 +229,7 @@ router.get(
       const billingMonth = getCurrentBillingMonth();
 
       // Active apartment count for billing
-      const [activeUnitCount] = await db
+      const [activeUnitCountRow] = await db
         .select({ count: count() })
         .from(unitsTable)
         .where(
@@ -249,7 +252,8 @@ router.get(
         )
         .limit(1);
 
-      const peak = usage?.peakActiveUnitCount ?? Number(activeUnitCount?.count ?? 0);
+      const activeUnitCount = Number(activeUnitCountRow?.count ?? 0);
+      const peak = usage?.peakActiveUnitCount ?? activeUnitCount;
 
       // H4 FIX: read pricing config from DB
       let config;
@@ -264,7 +268,7 @@ router.get(
         // No pricing config seeded yet — return minimal response
         res.json({
           currentPlan: companyReq.company.subscriptionTier,
-          activeUnitCount: Number(activeUnitCount?.count ?? 0),
+          activeUnitCount,
           peakActiveUnitCount: peak,
           ratePerUnitCents: null,
           estimatedAmountCents: null,
@@ -272,6 +276,8 @@ router.get(
           enterpriseFlagged: companyReq.company.enterpriseFlagged,
           freeUnitLimit: null,
           pricingConfigured: false,
+          // No isCustomPricing when config is unavailable
+          isCustomPricing: false,
         });
         return;
       }
@@ -279,12 +285,17 @@ router.get(
       const tier = calculateTier(peak, config, override);
       const estimated = calculateEstimatedAmountCents(peak, config, override);
       const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
-      const freeLimit =
-        override?.customFreeUnitLimit ?? config.freeUnitLimit;
+      const freeLimit = override?.customFreeUnitLimit ?? config.freeUnitLimit;
+
+      // Issue 7 FIX: derive isCustomPricing explicitly from the pricing config.
+      // This replaces the fragile inference of (plan === 'enterprise' && amount === 0)
+      // in the frontend.  Enterprise/fixed with fixed_rate=0 is NOT custom pricing.
+      const isCustomPricing =
+        tier === "enterprise" && config.enterprisePricingBehavior === "custom";
 
       res.json({
         currentPlan: tier,
-        activeUnitCount: Number(activeUnitCount?.count ?? 0),
+        activeUnitCount,
         peakActiveUnitCount: peak,
         ratePerUnitCents: rate,
         estimatedAmountCents: estimated,
@@ -292,6 +303,8 @@ router.get(
         enterpriseFlagged: companyReq.company.enterpriseFlagged,
         freeUnitLimit: freeLimit,
         pricingConfigured: true,
+        isCustomPricing,
+        enterprisePricingBehavior: config.enterprisePricingBehavior,
         snapshotConfig: {
           freeUnitLimit: config.freeUnitLimit,
           standardMin: config.standardMin,
@@ -308,6 +321,8 @@ router.get(
 );
 
 // ── GET /companies/:companyId/usage ───────────────────────────────────────────
+// Issue 7 FIX: each usage history row includes isCustomPricing derived from
+// snapshotEnterpriseBehavior so that the frontend does not need to infer it.
 
 router.get(
   "/companies/:companyId/usage",
@@ -333,7 +348,16 @@ router.get(
         .orderBy(sql`${monthlyUsageRecordsTable.billingMonth} DESC`)
         .limit(limit);
 
-      res.json(records);
+      // Issue 7 FIX: enrich each record with an explicit isCustomPricing flag
+      // derived from snapshot data so the frontend never has to infer it.
+      const enriched = records.map((r) => ({
+        ...r,
+        isCustomPricing:
+          r.subscriptionTier === "enterprise" &&
+          r.snapshotEnterpriseBehavior === "custom",
+      }));
+
+      res.json(enriched);
     } catch (err) {
       req.log.error({ err }, "GET /companies/:id/usage error");
       res.status(500).json({ error: "Internal server error" });
