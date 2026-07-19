@@ -27,19 +27,31 @@ import type {
   Company,
   CompanyRegistrationInput,
   CompanyUpdate,
+  CreateNoticeInput,
   DashboardSummary,
   GetBuildingUnitsParams,
   GetCompanyInvitationsParams,
+  GetCompanyNoticesParams,
   GetCompanyUsageHistoryParams,
+  GetMyNoticesParams,
   HealthStatus,
   InvitationAcceptInput,
   InvitationAcceptResult,
   InvitationDetail,
+  MarkNoticeRead200,
   MonthlyUsageRecord,
+  Notice,
+  NoticeDeliveryReport,
+  NoticeDetail,
+  NoticeFeedItem,
+  NoticeListItem,
+  NoticeVersion,
   OwnedUnitSummary,
   OwnerInvitationInput,
+  ScheduleNoticeInput,
   SubscriptionInfo,
   TenancySummary,
+  TenantDeliveryStatus,
   TenantInvitationInput,
   Unit,
   UnitDetail,
@@ -47,6 +59,8 @@ import type {
   UnitMembership,
   UnitSummary,
   UnitUpdate,
+  UnreadCount,
+  UpdateNoticeInput,
   User,
   UserContext,
   UserSyncInput
@@ -1962,6 +1976,1093 @@ export const useAcceptInvitation = <TError = ErrorType<void>,
       > => {
       return useMutation(getAcceptInvitationMutationOptions(options));
     }
+
+export const getGetCompanyNoticesUrl = (companyId: string,
+    params?: GetCompanyNoticesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/companies/${companyId}/notices?${stringifiedParams}` : `/api/companies/${companyId}/notices`
+}
+
+/**
+ * @summary List notices for a company (administrator only)
+ */
+export const getCompanyNotices = async (companyId: string,
+    params?: GetCompanyNoticesParams, options?: RequestInit): Promise<NoticeListItem[]> => {
+
+  return customFetch<NoticeListItem[]>(getGetCompanyNoticesUrl(companyId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCompanyNoticesQueryKey = (companyId: string,
+    params?: GetCompanyNoticesParams,) => {
+    return [
+    `/api/companies/${companyId}/notices`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetCompanyNoticesQueryOptions = <TData = Awaited<ReturnType<typeof getCompanyNotices>>, TError = ErrorType<void>>(companyId: string,
+    params?: GetCompanyNoticesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCompanyNotices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCompanyNoticesQueryKey(companyId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCompanyNotices>>> = ({ signal }) => getCompanyNotices(companyId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: companyId !== null && companyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCompanyNotices>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCompanyNoticesQueryResult = NonNullable<Awaited<ReturnType<typeof getCompanyNotices>>>
+export type GetCompanyNoticesQueryError = ErrorType<void>
+
+
+/**
+ * @summary List notices for a company (administrator only)
+ */
+
+export function useGetCompanyNotices<TData = Awaited<ReturnType<typeof getCompanyNotices>>, TError = ErrorType<void>>(
+ companyId: string,
+    params?: GetCompanyNoticesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCompanyNotices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCompanyNoticesQueryOptions(companyId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateNoticeUrl = (companyId: string,) => {
+
+
+
+
+  return `/api/companies/${companyId}/notices`
+}
+
+/**
+ * @summary Create a notice (administrator only)
+ */
+export const createNotice = async (companyId: string,
+    createNoticeInput: CreateNoticeInput, options?: RequestInit): Promise<Notice> => {
+
+  return customFetch<Notice>(getCreateNoticeUrl(companyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createNoticeInput)
+  }
+);}
+
+
+
+
+
+export const getCreateNoticeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createNotice>>, TError,{companyId: string;data: BodyType<CreateNoticeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createNotice>>, TError,{companyId: string;data: BodyType<CreateNoticeInput>}, TContext> => {
+
+const mutationKey = ['createNotice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createNotice>>, {companyId: string;data: BodyType<CreateNoticeInput>}> = (props) => {
+          const {companyId,data} = props ?? {};
+
+          return  createNotice(companyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateNoticeMutationResult = NonNullable<Awaited<ReturnType<typeof createNotice>>>
+    export type CreateNoticeMutationBody = BodyType<CreateNoticeInput>
+    export type CreateNoticeMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a notice (administrator only)
+ */
+export const useCreateNotice = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createNotice>>, TError,{companyId: string;data: BodyType<CreateNoticeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createNotice>>,
+        TError,
+        {companyId: string;data: BodyType<CreateNoticeInput>},
+        TContext
+      > => {
+      return useMutation(getCreateNoticeMutationOptions(options));
+    }
+
+export const getGetCompanyNoticeUrl = (companyId: string,
+    noticeId: string,) => {
+
+
+
+
+  return `/api/companies/${companyId}/notices/${noticeId}`
+}
+
+/**
+ * @summary Get notice detail (administrator only)
+ */
+export const getCompanyNotice = async (companyId: string,
+    noticeId: string, options?: RequestInit): Promise<NoticeDetail> => {
+
+  return customFetch<NoticeDetail>(getGetCompanyNoticeUrl(companyId,noticeId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCompanyNoticeQueryKey = (companyId: string,
+    noticeId: string,) => {
+    return [
+    `/api/companies/${companyId}/notices/${noticeId}`
+    ] as const;
+    }
+
+
+export const getGetCompanyNoticeQueryOptions = <TData = Awaited<ReturnType<typeof getCompanyNotice>>, TError = ErrorType<void>>(companyId: string,
+    noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCompanyNotice>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCompanyNoticeQueryKey(companyId,noticeId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCompanyNotice>>> = ({ signal }) => getCompanyNotice(companyId,noticeId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: companyId !== null && companyId !== undefined && noticeId !== null && noticeId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCompanyNotice>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCompanyNoticeQueryResult = NonNullable<Awaited<ReturnType<typeof getCompanyNotice>>>
+export type GetCompanyNoticeQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get notice detail (administrator only)
+ */
+
+export function useGetCompanyNotice<TData = Awaited<ReturnType<typeof getCompanyNotice>>, TError = ErrorType<void>>(
+ companyId: string,
+    noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCompanyNotice>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCompanyNoticeQueryOptions(companyId,noticeId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateNoticeUrl = (companyId: string,
+    noticeId: string,) => {
+
+
+
+
+  return `/api/companies/${companyId}/notices/${noticeId}`
+}
+
+/**
+ * @summary Edit a notice (draft, scheduled, or published)
+ */
+export const updateNotice = async (companyId: string,
+    noticeId: string,
+    updateNoticeInput: UpdateNoticeInput, options?: RequestInit): Promise<Notice> => {
+
+  return customFetch<Notice>(getUpdateNoticeUrl(companyId,noticeId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updateNoticeInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateNoticeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateNotice>>, TError,{companyId: string;noticeId: string;data: BodyType<UpdateNoticeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateNotice>>, TError,{companyId: string;noticeId: string;data: BodyType<UpdateNoticeInput>}, TContext> => {
+
+const mutationKey = ['updateNotice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateNotice>>, {companyId: string;noticeId: string;data: BodyType<UpdateNoticeInput>}> = (props) => {
+          const {companyId,noticeId,data} = props ?? {};
+
+          return  updateNotice(companyId,noticeId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateNoticeMutationResult = NonNullable<Awaited<ReturnType<typeof updateNotice>>>
+    export type UpdateNoticeMutationBody = BodyType<UpdateNoticeInput>
+    export type UpdateNoticeMutationError = ErrorType<void>
+
+    /**
+ * @summary Edit a notice (draft, scheduled, or published)
+ */
+export const useUpdateNotice = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateNotice>>, TError,{companyId: string;noticeId: string;data: BodyType<UpdateNoticeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateNotice>>,
+        TError,
+        {companyId: string;noticeId: string;data: BodyType<UpdateNoticeInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateNoticeMutationOptions(options));
+    }
+
+export const getPublishNoticeUrl = (companyId: string,
+    noticeId: string,) => {
+
+
+
+
+  return `/api/companies/${companyId}/notices/${noticeId}/publish`
+}
+
+/**
+ * @summary Publish a draft or scheduled notice immediately
+ */
+export const publishNotice = async (companyId: string,
+    noticeId: string, options?: RequestInit): Promise<Notice> => {
+
+  return customFetch<Notice>(getPublishNoticeUrl(companyId,noticeId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getPublishNoticeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishNotice>>, TError,{companyId: string;noticeId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof publishNotice>>, TError,{companyId: string;noticeId: string}, TContext> => {
+
+const mutationKey = ['publishNotice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof publishNotice>>, {companyId: string;noticeId: string}> = (props) => {
+          const {companyId,noticeId} = props ?? {};
+
+          return  publishNotice(companyId,noticeId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PublishNoticeMutationResult = NonNullable<Awaited<ReturnType<typeof publishNotice>>>
+
+    export type PublishNoticeMutationError = ErrorType<void>
+
+    /**
+ * @summary Publish a draft or scheduled notice immediately
+ */
+export const usePublishNotice = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishNotice>>, TError,{companyId: string;noticeId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof publishNotice>>,
+        TError,
+        {companyId: string;noticeId: string},
+        TContext
+      > => {
+      return useMutation(getPublishNoticeMutationOptions(options));
+    }
+
+export const getScheduleNoticeUrl = (companyId: string,
+    noticeId: string,) => {
+
+
+
+
+  return `/api/companies/${companyId}/notices/${noticeId}/schedule`
+}
+
+/**
+ * @summary Schedule a notice for future publication
+ */
+export const scheduleNotice = async (companyId: string,
+    noticeId: string,
+    scheduleNoticeInput: ScheduleNoticeInput, options?: RequestInit): Promise<Notice> => {
+
+  return customFetch<Notice>(getScheduleNoticeUrl(companyId,noticeId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(scheduleNoticeInput)
+  }
+);}
+
+
+
+
+
+export const getScheduleNoticeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof scheduleNotice>>, TError,{companyId: string;noticeId: string;data: BodyType<ScheduleNoticeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof scheduleNotice>>, TError,{companyId: string;noticeId: string;data: BodyType<ScheduleNoticeInput>}, TContext> => {
+
+const mutationKey = ['scheduleNotice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof scheduleNotice>>, {companyId: string;noticeId: string;data: BodyType<ScheduleNoticeInput>}> = (props) => {
+          const {companyId,noticeId,data} = props ?? {};
+
+          return  scheduleNotice(companyId,noticeId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ScheduleNoticeMutationResult = NonNullable<Awaited<ReturnType<typeof scheduleNotice>>>
+    export type ScheduleNoticeMutationBody = BodyType<ScheduleNoticeInput>
+    export type ScheduleNoticeMutationError = ErrorType<void>
+
+    /**
+ * @summary Schedule a notice for future publication
+ */
+export const useScheduleNotice = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof scheduleNotice>>, TError,{companyId: string;noticeId: string;data: BodyType<ScheduleNoticeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof scheduleNotice>>,
+        TError,
+        {companyId: string;noticeId: string;data: BodyType<ScheduleNoticeInput>},
+        TContext
+      > => {
+      return useMutation(getScheduleNoticeMutationOptions(options));
+    }
+
+export const getArchiveNoticeUrl = (companyId: string,
+    noticeId: string,) => {
+
+
+
+
+  return `/api/companies/${companyId}/notices/${noticeId}/archive`
+}
+
+/**
+ * @summary Archive a notice
+ */
+export const archiveNotice = async (companyId: string,
+    noticeId: string, options?: RequestInit): Promise<Notice> => {
+
+  return customFetch<Notice>(getArchiveNoticeUrl(companyId,noticeId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getArchiveNoticeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof archiveNotice>>, TError,{companyId: string;noticeId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof archiveNotice>>, TError,{companyId: string;noticeId: string}, TContext> => {
+
+const mutationKey = ['archiveNotice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof archiveNotice>>, {companyId: string;noticeId: string}> = (props) => {
+          const {companyId,noticeId} = props ?? {};
+
+          return  archiveNotice(companyId,noticeId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ArchiveNoticeMutationResult = NonNullable<Awaited<ReturnType<typeof archiveNotice>>>
+
+    export type ArchiveNoticeMutationError = ErrorType<void>
+
+    /**
+ * @summary Archive a notice
+ */
+export const useArchiveNotice = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof archiveNotice>>, TError,{companyId: string;noticeId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof archiveNotice>>,
+        TError,
+        {companyId: string;noticeId: string},
+        TContext
+      > => {
+      return useMutation(getArchiveNoticeMutationOptions(options));
+    }
+
+export const getGetNoticeVersionsUrl = (companyId: string,
+    noticeId: string,) => {
+
+
+
+
+  return `/api/companies/${companyId}/notices/${noticeId}/versions`
+}
+
+/**
+ * @summary Get version history for a published notice (administrator only)
+ */
+export const getNoticeVersions = async (companyId: string,
+    noticeId: string, options?: RequestInit): Promise<NoticeVersion[]> => {
+
+  return customFetch<NoticeVersion[]>(getGetNoticeVersionsUrl(companyId,noticeId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetNoticeVersionsQueryKey = (companyId: string,
+    noticeId: string,) => {
+    return [
+    `/api/companies/${companyId}/notices/${noticeId}/versions`
+    ] as const;
+    }
+
+
+export const getGetNoticeVersionsQueryOptions = <TData = Awaited<ReturnType<typeof getNoticeVersions>>, TError = ErrorType<void>>(companyId: string,
+    noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getNoticeVersions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetNoticeVersionsQueryKey(companyId,noticeId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getNoticeVersions>>> = ({ signal }) => getNoticeVersions(companyId,noticeId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: companyId !== null && companyId !== undefined && noticeId !== null && noticeId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getNoticeVersions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetNoticeVersionsQueryResult = NonNullable<Awaited<ReturnType<typeof getNoticeVersions>>>
+export type GetNoticeVersionsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get version history for a published notice (administrator only)
+ */
+
+export function useGetNoticeVersions<TData = Awaited<ReturnType<typeof getNoticeVersions>>, TError = ErrorType<void>>(
+ companyId: string,
+    noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getNoticeVersions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetNoticeVersionsQueryOptions(companyId,noticeId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetNoticeDeliveryUrl = (companyId: string,
+    noticeId: string,) => {
+
+
+
+
+  return `/api/companies/${companyId}/notices/${noticeId}/delivery`
+}
+
+/**
+ * @summary Get delivery and read statistics (administrator only)
+ */
+export const getNoticeDelivery = async (companyId: string,
+    noticeId: string, options?: RequestInit): Promise<NoticeDeliveryReport> => {
+
+  return customFetch<NoticeDeliveryReport>(getGetNoticeDeliveryUrl(companyId,noticeId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetNoticeDeliveryQueryKey = (companyId: string,
+    noticeId: string,) => {
+    return [
+    `/api/companies/${companyId}/notices/${noticeId}/delivery`
+    ] as const;
+    }
+
+
+export const getGetNoticeDeliveryQueryOptions = <TData = Awaited<ReturnType<typeof getNoticeDelivery>>, TError = ErrorType<void>>(companyId: string,
+    noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getNoticeDelivery>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetNoticeDeliveryQueryKey(companyId,noticeId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getNoticeDelivery>>> = ({ signal }) => getNoticeDelivery(companyId,noticeId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: companyId !== null && companyId !== undefined && noticeId !== null && noticeId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getNoticeDelivery>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetNoticeDeliveryQueryResult = NonNullable<Awaited<ReturnType<typeof getNoticeDelivery>>>
+export type GetNoticeDeliveryQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get delivery and read statistics (administrator only)
+ */
+
+export function useGetNoticeDelivery<TData = Awaited<ReturnType<typeof getNoticeDelivery>>, TError = ErrorType<void>>(
+ companyId: string,
+    noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getNoticeDelivery>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetNoticeDeliveryQueryOptions(companyId,noticeId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetMyNoticesUrl = (params?: GetMyNoticesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/me/notices?${stringifiedParams}` : `/api/me/notices`
+}
+
+/**
+ * @summary Get notice feed for the current user
+ */
+export const getMyNotices = async (params?: GetMyNoticesParams, options?: RequestInit): Promise<NoticeFeedItem[]> => {
+
+  return customFetch<NoticeFeedItem[]>(getGetMyNoticesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMyNoticesQueryKey = (params?: GetMyNoticesParams,) => {
+    return [
+    `/api/me/notices`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetMyNoticesQueryOptions = <TData = Awaited<ReturnType<typeof getMyNotices>>, TError = ErrorType<unknown>>(params?: GetMyNoticesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyNotices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMyNoticesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyNotices>>> = ({ signal }) => getMyNotices(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMyNotices>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMyNoticesQueryResult = NonNullable<Awaited<ReturnType<typeof getMyNotices>>>
+export type GetMyNoticesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get notice feed for the current user
+ */
+
+export function useGetMyNotices<TData = Awaited<ReturnType<typeof getMyNotices>>, TError = ErrorType<unknown>>(
+ params?: GetMyNoticesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyNotices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMyNoticesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetMyNoticesUnreadCountUrl = () => {
+
+
+
+
+  return `/api/me/notices/unread-count`
+}
+
+/**
+ * @summary Get the unread notice count for the current user
+ */
+export const getMyNoticesUnreadCount = async ( options?: RequestInit): Promise<UnreadCount> => {
+
+  return customFetch<UnreadCount>(getGetMyNoticesUnreadCountUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMyNoticesUnreadCountQueryKey = () => {
+    return [
+    `/api/me/notices/unread-count`
+    ] as const;
+    }
+
+
+export const getGetMyNoticesUnreadCountQueryOptions = <TData = Awaited<ReturnType<typeof getMyNoticesUnreadCount>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyNoticesUnreadCount>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMyNoticesUnreadCountQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyNoticesUnreadCount>>> = ({ signal }) => getMyNoticesUnreadCount({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMyNoticesUnreadCount>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMyNoticesUnreadCountQueryResult = NonNullable<Awaited<ReturnType<typeof getMyNoticesUnreadCount>>>
+export type GetMyNoticesUnreadCountQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the unread notice count for the current user
+ */
+
+export function useGetMyNoticesUnreadCount<TData = Awaited<ReturnType<typeof getMyNoticesUnreadCount>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyNoticesUnreadCount>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMyNoticesUnreadCountQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetMyNoticeUrl = (noticeId: string,) => {
+
+
+
+
+  return `/api/me/notices/${noticeId}`
+}
+
+/**
+ * @summary Get a notice detail and mark it as read
+ */
+export const getMyNotice = async (noticeId: string, options?: RequestInit): Promise<NoticeFeedItem> => {
+
+  return customFetch<NoticeFeedItem>(getGetMyNoticeUrl(noticeId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMyNoticeQueryKey = (noticeId: string,) => {
+    return [
+    `/api/me/notices/${noticeId}`
+    ] as const;
+    }
+
+
+export const getGetMyNoticeQueryOptions = <TData = Awaited<ReturnType<typeof getMyNotice>>, TError = ErrorType<void>>(noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyNotice>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMyNoticeQueryKey(noticeId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyNotice>>> = ({ signal }) => getMyNotice(noticeId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: noticeId !== null && noticeId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMyNotice>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMyNoticeQueryResult = NonNullable<Awaited<ReturnType<typeof getMyNotice>>>
+export type GetMyNoticeQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a notice detail and mark it as read
+ */
+
+export function useGetMyNotice<TData = Awaited<ReturnType<typeof getMyNotice>>, TError = ErrorType<void>>(
+ noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyNotice>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMyNoticeQueryOptions(noticeId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getMarkNoticeReadUrl = (noticeId: string,) => {
+
+
+
+
+  return `/api/me/notices/${noticeId}/read`
+}
+
+/**
+ * @summary Mark a notice as read
+ */
+export const markNoticeRead = async (noticeId: string, options?: RequestInit): Promise<MarkNoticeRead200> => {
+
+  return customFetch<MarkNoticeRead200>(getMarkNoticeReadUrl(noticeId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getMarkNoticeReadMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markNoticeRead>>, TError,{noticeId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markNoticeRead>>, TError,{noticeId: string}, TContext> => {
+
+const mutationKey = ['markNoticeRead'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markNoticeRead>>, {noticeId: string}> = (props) => {
+          const {noticeId} = props ?? {};
+
+          return  markNoticeRead(noticeId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkNoticeReadMutationResult = NonNullable<Awaited<ReturnType<typeof markNoticeRead>>>
+
+    export type MarkNoticeReadMutationError = ErrorType<void>
+
+    /**
+ * @summary Mark a notice as read
+ */
+export const useMarkNoticeRead = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markNoticeRead>>, TError,{noticeId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof markNoticeRead>>,
+        TError,
+        {noticeId: string},
+        TContext
+      > => {
+      return useMutation(getMarkNoticeReadMutationOptions(options));
+    }
+
+export const getGetMyNoticeTenantDeliveryUrl = (noticeId: string,) => {
+
+
+
+
+  return `/api/me/notices/${noticeId}/tenant-delivery`
+}
+
+/**
+ * @summary Owner view of tenant delivery status for their apartments
+ */
+export const getMyNoticeTenantDelivery = async (noticeId: string, options?: RequestInit): Promise<TenantDeliveryStatus[]> => {
+
+  return customFetch<TenantDeliveryStatus[]>(getGetMyNoticeTenantDeliveryUrl(noticeId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMyNoticeTenantDeliveryQueryKey = (noticeId: string,) => {
+    return [
+    `/api/me/notices/${noticeId}/tenant-delivery`
+    ] as const;
+    }
+
+
+export const getGetMyNoticeTenantDeliveryQueryOptions = <TData = Awaited<ReturnType<typeof getMyNoticeTenantDelivery>>, TError = ErrorType<void>>(noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyNoticeTenantDelivery>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMyNoticeTenantDeliveryQueryKey(noticeId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyNoticeTenantDelivery>>> = ({ signal }) => getMyNoticeTenantDelivery(noticeId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: noticeId !== null && noticeId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMyNoticeTenantDelivery>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMyNoticeTenantDeliveryQueryResult = NonNullable<Awaited<ReturnType<typeof getMyNoticeTenantDelivery>>>
+export type GetMyNoticeTenantDeliveryQueryError = ErrorType<void>
+
+
+/**
+ * @summary Owner view of tenant delivery status for their apartments
+ */
+
+export function useGetMyNoticeTenantDelivery<TData = Awaited<ReturnType<typeof getMyNoticeTenantDelivery>>, TError = ErrorType<void>>(
+ noticeId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyNoticeTenantDelivery>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMyNoticeTenantDeliveryQueryOptions(noticeId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetMyUnitsUrl = () => {
 

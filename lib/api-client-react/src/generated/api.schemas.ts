@@ -417,6 +417,220 @@ export interface InvitationAcceptResult {
   redirectTo?: string;
 }
 
+export type NoticeCategory = typeof NoticeCategory[keyof typeof NoticeCategory];
+
+
+export const NoticeCategory = {
+  general: 'general',
+  emergency: 'emergency',
+  planned_maintenance: 'planned_maintenance',
+  cleaning: 'cleaning',
+  lift: 'lift',
+  agm_announcement: 'agm_announcement',
+  other: 'other',
+} as const;
+
+export type NoticeStatus = typeof NoticeStatus[keyof typeof NoticeStatus];
+
+
+export const NoticeStatus = {
+  draft: 'draft',
+  scheduled: 'scheduled',
+  published: 'published',
+  archived: 'archived',
+} as const;
+
+export type NoticeAudience = typeof NoticeAudience[keyof typeof NoticeAudience];
+
+
+export const NoticeAudience = {
+  owners_only: 'owners_only',
+  tenants_only: 'tenants_only',
+  owners_and_tenants: 'owners_and_tenants',
+} as const;
+
+export type NoticeTargetingMode = typeof NoticeTargetingMode[keyof typeof NoticeTargetingMode];
+
+
+export const NoticeTargetingMode = {
+  company_wide: 'company_wide',
+  buildings: 'buildings',
+  apartments: 'apartments',
+} as const;
+
+export interface Notice {
+  id: string;
+  companyId: string;
+  title: string;
+  body: string;
+  category: NoticeCategory;
+  audience: NoticeAudience;
+  status: NoticeStatus;
+  targetingMode: NoticeTargetingMode;
+  /** @nullable */
+  scheduledPublishAt?: string | null;
+  /** @nullable */
+  publishedAt?: string | null;
+  /** @nullable */
+  archivedAt?: string | null;
+  versionNumber: number;
+  createdByUserId: string;
+  /** @nullable */
+  updatedByUserId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NoticeDetail = Notice & {
+  buildingIds?: string[];
+  unitIds?: string[];
+};
+
+export interface NoticeDeliveryStats {
+  totalRecipients: number;
+  totalRead: number;
+  readPercentage: number;
+}
+
+export type NoticeListItem = Notice & {
+  deliveryStats?: NoticeDeliveryStats;
+};
+
+export type NoticeVersionTargetingSnapshot = {
+  targetingMode?: string;
+  buildingIds?: string[];
+  unitIds?: string[];
+};
+
+export interface NoticeVersion {
+  id: string;
+  versionNumber: number;
+  title: string;
+  body: string;
+  category: NoticeCategory;
+  audience: NoticeAudience;
+  targetingSnapshot?: NoticeVersionTargetingSnapshot;
+  /** @nullable */
+  editedByUserId?: string | null;
+  /** @nullable */
+  editorName?: string | null;
+  /** @nullable */
+  editReason?: string | null;
+  createdAt: string;
+}
+
+export type NoticeDeliveryEntryContextsItem = {
+  buildingId?: string;
+  /** @nullable */
+  unitId?: string | null;
+  /** @nullable */
+  buildingName?: string | null;
+  /** @nullable */
+  unitNumber?: string | null;
+};
+
+export interface NoticeDeliveryEntry {
+  deliveryId?: string;
+  userId?: string;
+  recipientRole?: string;
+  deliveredAt?: string;
+  /** @nullable */
+  firstReadAt?: string | null;
+  /** @nullable */
+  lastReadAt?: string | null;
+  /** @nullable */
+  userName?: string | null;
+  /** @nullable */
+  userEmail?: string | null;
+  contexts?: NoticeDeliveryEntryContextsItem[];
+}
+
+export type NoticeDeliveryReportSummary = {
+  targetedBuildings: number;
+  targetedApartments: number;
+  totalRecipients: number;
+  ownersDelivered: number;
+  tenantsDelivered: number;
+  totalRead: number;
+  totalUnread: number;
+  readPercentage: number;
+};
+
+export interface NoticeDeliveryReport {
+  summary: NoticeDeliveryReportSummary;
+  deliveries: NoticeDeliveryEntry[];
+}
+
+export interface NoticeUserDelivery {
+  /** @nullable */
+  id?: string | null;
+  /** @nullable */
+  recipientRole?: string | null;
+  /** @nullable */
+  deliveredAt?: string | null;
+  /** @nullable */
+  firstReadAt?: string | null;
+  /** @nullable */
+  lastReadAt?: string | null;
+  /** @nullable */
+  lastReadVersion?: number | null;
+  isRead?: boolean;
+  isUnread?: boolean;
+}
+
+export type NoticeFeedItem = Notice & {
+  delivery?: NoticeUserDelivery;
+};
+
+export interface UnreadCount {
+  unreadCount: number;
+}
+
+export interface TenantDeliveryStatus {
+  unitId: string;
+  unitNumber: string;
+  delivered: boolean;
+  isRead: boolean;
+  /** @nullable */
+  firstReadAt?: string | null;
+  /** @nullable */
+  tenantName?: string | null;
+}
+
+export interface CreateNoticeInput {
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  body: string;
+  category: NoticeCategory;
+  audience: NoticeAudience;
+  targetingMode: NoticeTargetingMode;
+  buildingIds?: string[];
+  unitIds?: string[];
+  publishImmediately?: boolean;
+  /** @nullable */
+  scheduledPublishAt?: string | null;
+}
+
+export interface UpdateNoticeInput {
+  /** @minLength 1 */
+  title?: string;
+  /** @minLength 1 */
+  body?: string;
+  category?: NoticeCategory;
+  audience?: NoticeAudience;
+  targetingMode?: NoticeTargetingMode;
+  buildingIds?: string[];
+  unitIds?: string[];
+  /** @nullable */
+  scheduledPublishAt?: string | null;
+  editReason?: string;
+}
+
+export interface ScheduleNoticeInput {
+  scheduledPublishAt: string;
+}
+
 export type GetCompanyInvitationsParams = {
 /**
  * Filter by status (default pending)
@@ -453,4 +667,35 @@ export const GetBuildingUnitsStatus = {
   archived: 'archived',
   all: 'all',
 } as const;
+
+export type GetCompanyNoticesParams = {
+status?: GetCompanyNoticesStatus;
+category?: string;
+audience?: string;
+buildingId?: string;
+unitId?: string;
+};
+
+export type GetCompanyNoticesStatus = typeof GetCompanyNoticesStatus[keyof typeof GetCompanyNoticesStatus];
+
+
+export const GetCompanyNoticesStatus = {
+  draft: 'draft',
+  scheduled: 'scheduled',
+  published: 'published',
+  archived: 'archived',
+  all: 'all',
+} as const;
+
+export type GetMyNoticesParams = {
+unreadOnly?: boolean;
+category?: string;
+buildingId?: string;
+unitId?: string;
+includeArchived?: boolean;
+};
+
+export type MarkNoticeRead200 = {
+  success?: boolean;
+};
 

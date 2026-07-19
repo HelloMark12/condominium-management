@@ -29,16 +29,22 @@ import UnitDetailPage from '@/pages/admin/UnitDetailPage';
 import InvitationsPage from '@/pages/admin/InvitationsPage';
 import SubscriptionPage from '@/pages/admin/SubscriptionPage';
 import SettingsPage from '@/pages/admin/SettingsPage';
+import NoticesPage from '@/pages/admin/NoticesPage';
+import CreateNoticePage from '@/pages/admin/CreateNoticePage';
+import NoticeDetailPage from '@/pages/admin/NoticeDetailPage';
 
 import OwnerHomePage from '@/pages/owner/OwnerHomePage';
 import OwnerApartmentsPage from '@/pages/owner/OwnerApartmentsPage';
 import OwnerApartmentDetailPage from '@/pages/owner/OwnerApartmentDetailPage';
 import OwnerProfilePage from '@/pages/owner/OwnerProfilePage';
+import OwnerNoticesPage from '@/pages/owner/OwnerNoticesPage';
+import OwnerNoticeDetailPage from '@/pages/owner/OwnerNoticeDetailPage';
 
 import TenantHomePage from '@/pages/tenant/TenantHomePage';
 import TenantApartmentPage from '@/pages/tenant/TenantApartmentPage';
 import TenantBuildingPage from '@/pages/tenant/TenantBuildingPage';
 import TenantNoticesPage from '@/pages/tenant/TenantNoticesPage';
+import TenantNoticeDetailPage from '@/pages/tenant/TenantNoticeDetailPage';
 import TenantProfilePage from '@/pages/tenant/TenantProfilePage';
 
 
@@ -242,6 +248,9 @@ function AppRouter() {
                             <Route path="/admin/buildings/:buildingId" component={BuildingDetailPage} />
                             <Route path="/admin/units" component={UnitsPage} />
                             <Route path="/admin/units/:unitId" component={UnitDetailPage} />
+                            <Route path="/admin/notices/new" component={CreateNoticePage} />
+                            <Route path="/admin/notices/:noticeId" component={NoticeDetailPage} />
+                            <Route path="/admin/notices" component={NoticesPage} />
                             <Route path="/admin/invitations" component={InvitationsPage} />
                             <Route path="/admin/subscription" component={SubscriptionPage} />
                             <Route path="/admin/settings" component={SettingsPage} />
@@ -259,6 +268,8 @@ function AppRouter() {
                             <Route path="/owner/home" component={OwnerHomePage} />
                             <Route path="/owner/apartments" component={OwnerApartmentsPage} />
                             <Route path="/owner/apartments/:unitId" component={OwnerApartmentDetailPage} />
+                            <Route path="/owner/notices/:noticeId" component={OwnerNoticeDetailPage} />
+                            <Route path="/owner/notices" component={OwnerNoticesPage} />
                             <Route path="/owner/profile" component={OwnerProfilePage} />
                             <Route component={NotFound} />
                           </Switch>
@@ -274,6 +285,7 @@ function AppRouter() {
                             <Route path="/tenant/home" component={TenantHomePage} />
                             <Route path="/tenant/apartment" component={TenantApartmentPage} />
                             <Route path="/tenant/building" component={TenantBuildingPage} />
+                            <Route path="/tenant/notices/:noticeId" component={TenantNoticeDetailPage} />
                             <Route path="/tenant/notices" component={TenantNoticesPage} />
                             <Route path="/tenant/profile" component={TenantProfilePage} />
                             <Route component={NotFound} />

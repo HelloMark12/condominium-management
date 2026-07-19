@@ -12,12 +12,15 @@ import { CategoryBadge, UnreadDot, CATEGORY_LABELS } from "@/components/notices/
 import { useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-export default function TenantNoticesPage() {
+export default function OwnerNoticesPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
 
   const { data: notices, isLoading } = useGetMyNotices(
-    { unreadOnly: showUnreadOnly || undefined, category: categoryFilter !== "all" ? categoryFilter as "general" | "emergency" | "planned_maintenance" | "cleaning" | "lift" | "agm_announcement" | "other" : undefined },
+    {
+      unreadOnly: showUnreadOnly || undefined,
+      category: categoryFilter !== "all" ? categoryFilter as "general" | "emergency" | "planned_maintenance" | "cleaning" | "lift" | "agm_announcement" | "other" : undefined,
+    },
     { query: { queryKey: getGetMyNoticesQueryKey({ unreadOnly: showUnreadOnly || undefined }) } }
   );
 
@@ -88,7 +91,7 @@ export default function TenantNoticesPage() {
       ) : (
         <div className="space-y-3">
           {notices.map((notice) => (
-            <Link key={notice.id} href={`/tenant/notices/${notice.id}`}>
+            <Link key={notice.id} href={`/owner/notices/${notice.id}`}>
               <Card
                 className={`cursor-pointer transition-colors hover:border-primary/30 ${
                   notice.category === "emergency" && notice.delivery?.isUnread
@@ -99,9 +102,7 @@ export default function TenantNoticesPage() {
                 <CardContent className="p-4">
                   <div className="flex items-start gap-3">
                     {notice.delivery?.isUnread ? (
-                      <div className="mt-1.5 shrink-0">
-                        <UnreadDot />
-                      </div>
+                      <div className="mt-1.5 shrink-0"><UnreadDot /></div>
                     ) : (
                       <div className="mt-1.5 h-2 w-2 shrink-0" />
                     )}

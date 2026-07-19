@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
-import { Building, LayoutDashboard, Grid, Users, CreditCard, Settings, LogOut, Menu } from "lucide-react";
+import { Building, LayoutDashboard, Grid, Users, CreditCard, Settings, LogOut, Menu, BellRing } from "lucide-react";
 import { useAppContext } from "@/hooks/useAppContext";
 import { Button } from "../ui/button";
 
@@ -14,6 +14,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
     { name: "Buildings", href: "/admin/buildings", icon: Building },
     { name: "Apartments", href: "/admin/units", icon: Grid },
+    { name: "Notices", href: "/admin/notices", icon: BellRing },
     { name: "Invitations", href: "/admin/invitations", icon: Users },
     { name: "Subscription", href: "/admin/subscription", icon: CreditCard },
     { name: "Settings", href: "/admin/settings", icon: Settings },

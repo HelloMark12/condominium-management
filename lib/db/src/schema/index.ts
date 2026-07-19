@@ -7,3 +7,4 @@ export * from "./platform_admins";
 export * from "./units";
 export * from "./unit_memberships";
 export * from "./monthly_usage";
+export * from "./notices";

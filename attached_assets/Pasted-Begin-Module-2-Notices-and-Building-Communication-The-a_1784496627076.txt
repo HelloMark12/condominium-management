@@ -1,0 +1,715 @@
+Begin Module 2: Notices and Building Communication.
+
+The application foundation at commit 9e32edd has been independently audited and approved. Preserve all existing security, billing, authentication, migration and testing behaviour.
+
+Do not rebuild the foundation or weaken any existing authorization rule.
+
+Do not add maintenance tickets, document storage, voting, condominium finance, online payments, contractor accounts, email delivery, SMS, WhatsApp, push notifications or AI functionality in this module.
+
+Build only the Notices and Building Communication module described below.
+
+Use the existing:
+
+- React and TypeScript frontend
+- Express and TypeScript backend
+- PostgreSQL database
+- Drizzle ORM
+- Clerk authentication
+- OpenAPI-generated client structure
+- Relationship-based authorization
+- Multi-company data isolation
+- Existing test infrastructure
+
+Before implementing, briefly inspect the current database schema, API patterns, route guards, migrations and tests. Then proceed without requesting further approval unless a genuine blocker exists.
+
+# MODULE OBJECTIVE
+
+Allow condominium administrators to communicate securely with property owners and tenants inside the application.
+
+Administrators create and manage notices.
+
+Owners and tenants receive a combined, read-only notice feed based on:
+
+- Their active apartment relationships
+- The buildings connected to those apartments
+- The notice audience
+- The notice targets
+
+Owners and tenants cannot reply, edit notices or create official concerns.
+
+# CORE PRINCIPLES
+
+- The condominium administrator remains the manager of all communication.
+- One shared app is used by administrators, owners and tenants.
+- Permissions are enforced on the backend.
+- Archived apartments grant no notice access.
+- No resident may see unrelated residents, owners or tenants.
+- Administrators may see delivery information only for buildings and apartments managed by their company.
+- Owners may see delivery information only for tenants connected to apartments they own.
+- Tenants may see only their own read status.
+- Notices are never permanently deleted.
+- Published-notice edits are permanently auditable.
+
+# NOTICE TARGETING
+
+An administrator must be able to target:
+
+1. All active apartments across the administrator company
+2. One building
+3. Multiple selected buildings
+4. One individual apartment
+5. Multiple selected apartments
+
+Targeting rules:
+
+- An apartment target must belong to the administrator’s company.
+- A building target must belong to the administrator’s company.
+- Archived apartments must not be selectable.
+- Inactive or archived buildings must not be selectable.
+- The backend must validate every selected building and apartment.
+- Do not trust target IDs supplied by the frontend.
+- Do not allow targets belonging to another administration company.
+
+If a notice targets both a building and an apartment inside that building, the same recipient should receive the notice only once.
+
+# AUDIENCE OPTIONS
+
+The administrator chooses one audience:
+
+- Owners only
+- Tenants only
+- Owners and tenants
+
+Audience rules:
+
+Owners only:
+- Deliver to users with active ownership relationships for targeted active apartments.
+
+Tenants only:
+- Deliver to users with active tenancy relationships for targeted active apartments.
+
+Owners and tenants:
+- Deliver to both groups.
+
+A person who owns or rents multiple targeted apartments should see one copy of the same notice in their feed, not duplicates.
+
+The system must still record all relevant delivery relationships internally so administrators can understand which buildings and apartments were covered.
+
+# NOTICE CATEGORIES
+
+Support these categories:
+
+- General
+- Emergency
+- Planned maintenance
+- Cleaning
+- Lift
+- AGM announcement
+- Other
+
+Store categories in a maintainable database enum or equivalent validated structure.
+
+Category labels shown in the UI should be easy to change later.
+
+# NOTICE STATUS
+
+Support:
+
+- Draft
+- Scheduled
+- Published
+- Archived
+
+Rules:
+
+Draft:
+- Visible only to authorised administrators.
+- Can be edited freely.
+- Can be published or scheduled.
+
+Scheduled:
+- Visible only to administrators until publication time.
+- Can be edited or cancelled before publication.
+- Must publish according to Europe/Malta time.
+
+Published:
+- Visible to targeted owners and tenants.
+- Can be edited, but all changes must be versioned.
+- Cannot be converted back into a draft.
+
+Archived:
+- Removed from the default active feed.
+- Still available in historical notice records.
+- Cannot be permanently deleted.
+
+# NOTICE CONTENT
+
+Each notice must support:
+
+- Title
+- Body/message
+- Category
+- Audience
+- Targeting mode
+- Targeted building IDs
+- Targeted apartment IDs
+- Status
+- Publish immediately option
+- Scheduled publication date and time
+- Published date and time
+- Archived date and time
+- Created by administrator
+- Last edited by administrator
+- Created timestamp
+- Updated timestamp
+- Version number
+
+Validation:
+
+- Title is required.
+- Body is required.
+- At least one valid target is required.
+- Audience is required.
+- Category is required.
+- Scheduled publication must be in the future.
+- Use Europe/Malta for scheduling and display.
+- Reject invalid or cross-company targets.
+
+# PUBLISHED NOTICE EDITING AND VERSION HISTORY
+
+Published notices may be edited.
+
+Every published edit must:
+
+- Preserve the previous title and body.
+- Preserve the previous category, audience and targets.
+- Store the administrator who made the change.
+- Store the date and time.
+- Increment the notice version.
+- Store an optional edit reason.
+- Never overwrite historical versions.
+
+Create a notice_versions table or equivalent immutable history structure.
+
+Administrators should be able to open a notice and view:
+
+- Current version
+- Previous versions
+- Date of each edit
+- Administrator responsible
+- Edit reason where entered
+
+Owners and tenants should see:
+
+- The current version
+- An “Updated” label
+- The latest update date
+- No internal administrator notes
+
+If a published Emergency notice is edited:
+
+- Mark the notice as updated.
+- Reset or create a new unread state for the affected recipients so they see the updated emergency message again.
+- Preserve their previous read history in the audit data.
+
+For non-emergency published notices:
+
+- Preserve existing read records.
+- Show the Updated label.
+- Do not automatically make the notice unread again in this first version.
+
+# DELIVERY AND READ TRACKING
+
+Track notice delivery and reads.
+
+The system must know:
+
+- Which user received the notice
+- Why they received it
+- Relevant apartment relationship
+- Relevant building
+- User role at the time of delivery
+- Delivered timestamp
+- First opened timestamp
+- Most recent opened timestamp
+- Read status
+- Notice version last read
+
+Read behaviour:
+
+- Opening a notice marks it as read.
+- Reading must be recorded server-side.
+- A resident cannot mark another user’s notice as read.
+- A user receiving the same notice through multiple apartments sees one feed item.
+- Opening that feed item records one user-level read state while preserving internal apartment/building coverage.
+
+Do not expose recipient lists to other residents.
+
+# ADMINISTRATOR DELIVERY VIEW
+
+Administrators can view aggregate notice information:
+
+- Number of targeted buildings
+- Number of targeted apartments
+- Total unique recipients
+- Owners delivered
+- Tenants delivered
+- Total opened
+- Total unread
+- Read percentage
+
+Administrators may also view a detailed delivery list containing:
+
+- Recipient name
+- Recipient role
+- Building
+- Apartment
+- Delivery status
+- Read or unread
+- First opened time
+
+Only the administrator’s own company data may appear.
+
+# OWNER TENANT-DELIVERY VIEW
+
+An owner may view delivery information only for tenants linked to apartments the owner currently owns.
+
+For each apartment the owner owns, the owner may see:
+
+- Tenant name
+- Whether the notice was delivered to that tenant
+- Whether it was read
+- Read time where available
+
+The owner must not see:
+
+- Tenants of other owners
+- Other owners
+- Full building recipient lists
+- Email addresses or phone numbers
+- Administrator-only delivery analytics
+
+A tenant may see only their own read state.
+
+# OWNER AND TENANT NOTICE FEED
+
+Create one notice feed interface used by both owners and tenants with permission-based results.
+
+The feed should show:
+
+- Unread indicator
+- Category
+- Title
+- Building name
+- Apartment context where relevant
+- Administrator company
+- Publication date
+- Updated label where relevant
+- Emergency priority styling
+- Read/unread status
+
+The feed should support:
+
+- All notices
+- Unread notices
+- Archived or historical notices
+- Filter by building
+- Filter by apartment
+- Filter by category
+
+Sort order:
+
+1. Unread emergency notices
+2. Other unread notices
+3. Read notices by newest publication date
+
+Opening a notice should display:
+
+- Title
+- Full message
+- Category
+- Publication time
+- Updated time where relevant
+- Building/apartment applicability
+- Administrator company
+- Current version
+
+Owners and tenants cannot:
+
+- Reply
+- Comment
+- Edit
+- Delete
+- Forward recipient data
+- View unrelated delivery information
+
+# UNREAD COUNTS
+
+Add an unread notice count to:
+
+- Owner navigation
+- Tenant navigation
+- Owner home dashboard
+- Tenant home dashboard
+
+The count must be calculated by the backend for the authenticated user.
+
+Do not rely only on frontend state.
+
+# ADMINISTRATOR SCREENS
+
+Build:
+
+1. Notices list
+2. Create notice
+3. Edit draft
+4. Edit scheduled notice
+5. Edit published notice
+6. Notice detail
+7. Delivery and read summary
+8. Version history
+9. Archived notices view
+
+Notices list filters:
+
+- Status
+- Category
+- Building
+- Apartment
+- Audience
+- Publication date
+
+Show:
+
+- Title
+- Category
+- Status
+- Audience
+- Target summary
+- Scheduled or published date
+- Unique recipients
+- Read percentage
+- Last updated
+
+# OWNER AND TENANT SCREENS
+
+Build:
+
+1. Notices feed
+2. Notice detail
+3. Unread notices state
+4. Historical notices filter
+
+Update the existing tenant notices placeholder into the real notice feed.
+
+Owners and tenants use the same notice components with backend-controlled permissions.
+
+# DATABASE DESIGN
+
+Create a maintainable schema supporting at least:
+
+notices
+- id
+- company_id
+- title
+- body
+- category
+- audience
+- status
+- targeting_mode
+- scheduled_publish_at
+- published_at
+- archived_at
+- version_number
+- created_by_user_id
+- updated_by_user_id
+- created_at
+- updated_at
+
+notice_building_targets
+- notice_id
+- company_id
+- building_id
+
+notice_unit_targets
+- notice_id
+- company_id
+- unit_id
+
+notice_versions
+- id
+- notice_id
+- company_id
+- version_number
+- title
+- body
+- category
+- audience
+- targeting snapshot
+- edited_by_user_id
+- edit_reason
+- created_at
+
+notice_deliveries
+- id
+- notice_id
+- company_id
+- user_id
+- recipient_role
+- delivered_at
+- first_read_at
+- last_read_at
+- last_read_version
+- unread status or derived state
+
+notice_delivery_contexts
+- delivery_id
+- company_id
+- building_id
+- unit_id
+- relationship role
+
+Use UUIDs and appropriate foreign keys.
+
+Add:
+
+- Company isolation keys
+- Unique constraints preventing duplicate user delivery for the same notice
+- Indexes for user feeds
+- Indexes for company notice lists
+- Indexes for publication scheduling
+- Indexes for unread counts
+- Target integrity protections
+- Appropriate archive-safe behaviour
+
+Where raw PostgreSQL triggers or special indexes are required, add them to the supported production migration and automated test-database setup.
+
+Do not use permanent deletion cascades that would destroy audit history.
+
+# PUBLISHING AND RECIPIENT GENERATION
+
+When a notice is published:
+
+1. Validate administrator access.
+2. Validate status transition.
+3. Validate audience and all targets.
+4. Resolve active targeted apartments.
+5. Resolve eligible active owners and/or tenants.
+6. Deduplicate users.
+7. Create one notice_delivery per unique user.
+8. Create all relevant notice_delivery_context rows.
+9. Set published_at.
+10. Store the initial immutable notice version.
+11. Create building timeline events for every affected building.
+12. Commit the complete operation atomically.
+
+Use a database transaction.
+
+If recipient generation fails, the notice must not be partially published.
+
+# SCHEDULED PUBLICATION
+
+Implement scheduled publishing in a maintainable manner.
+
+Use Europe/Malta.
+
+Provide:
+
+- A scheduled publishing service/function
+- Idempotent publication
+- Safe handling if executed twice
+- A method that can be triggered through a scheduled job later
+- A lazy fallback check when an administrator accesses the notice area
+
+Automated tests must be able to invoke the scheduled publication service directly.
+
+Do not rely solely on the browser remaining open.
+
+# BUILDING TIMELINE
+
+Publishing a notice should automatically create a building timeline event for every targeted building.
+
+For individual apartment targets, use the apartment’s building.
+
+The timeline event should include:
+
+- Event type: notice_published
+- Building
+- Notice ID
+- Notice title
+- Category
+- Publication time
+- Administrator
+- Summary
+- Created timestamp
+
+If a generic building timeline table does not yet exist, create a minimal reusable building_timeline_events table now.
+
+Do not build the complete timeline module UI in this cycle.
+
+Ensure duplicate timeline entries are not created if scheduled publishing is attempted more than once.
+
+# SECURITY
+
+All authorization must be server-side.
+
+Test:
+
+- Administrator A cannot create notices for Company B.
+- Administrator A cannot target Company B buildings or apartments.
+- Administrator A cannot read or edit Company B notices.
+- Owner cannot access unrelated notices.
+- Tenant cannot access unrelated notices.
+- Owner cannot see tenants of other owners.
+- Tenant cannot see recipient lists.
+- Archived apartments grant no notice access.
+- Cross-company UUID manipulation fails.
+- Users cannot manually mark another user’s delivery as read.
+- Scheduled publication cannot be triggered by an unauthorised user.
+- Version history is administrator-only.
+
+# OPENAPI AND GENERATED CLIENT
+
+Update:
+
+- OpenAPI specification
+- Zod validators
+- Generated React Query hooks
+- Backend routes
+- Frontend integrations
+
+Regenerate clients cleanly.
+
+Do not handwrite inconsistent frontend request types if generated types exist.
+
+# AUTOMATED TESTING
+
+Preserve all existing 149 passing tests.
+
+Add meaningful automated tests for this module.
+
+Backend unit tests:
+
+- Notice validation
+- Status transitions
+- Audience resolution
+- Recipient deduplication
+- Scheduled publication timing
+- Version incrementing
+- Emergency unread reset logic
+
+API integration tests:
+
+- Administrator creates a draft
+- Administrator publishes immediately
+- Administrator schedules a notice
+- Scheduled notice publishes once
+- One-building targeting
+- Multiple-building targeting
+- Individual-apartment targeting
+- Multiple-apartment targeting
+- Owners-only audience
+- Tenants-only audience
+- Owners-and-tenants audience
+- Duplicate recipient deduplication
+- Cross-company target rejection
+- Archived apartment exclusion
+- Owner feed access
+- Tenant feed access
+- Unread count
+- Mark as read
+- Prevent marking another user’s delivery
+- Administrator aggregate delivery statistics
+- Owner sees own tenant’s delivery only
+- Owner cannot see another owner’s tenant
+- Published notice version history
+- Emergency edit resets unread state
+- Non-emergency edit preserves read state
+- Archived notice feed behaviour
+- Building timeline entry creation
+- No duplicate timeline entry on repeated scheduled publication
+
+Frontend tests:
+
+- Administrator notice list
+- Create-notice form validation
+- Target selector behaviour
+- Audience selector
+- Scheduled date validation
+- Owner feed
+- Tenant feed
+- Unread badge
+- Emergency priority display
+- Updated label
+- Owner tenant-delivery view restrictions
+- Cross-role route protection
+
+Use a real isolated PostgreSQL database for backend integration tests.
+
+Do not write tests with optional assertions that pass when expected records are missing.
+
+# MIGRATION AND DOCUMENTATION
+
+Add a versioned, non-interactive production migration.
+
+Update:
+
+- Test database setup
+- replit.md
+- Relevant schema documentation
+- Root test command if needed
+
+The migration must:
+
+- Work from the current audited schema
+- Run transactionally
+- Be repeatable where practical
+- Fail clearly on invalid existing data
+- Install any required indexes or triggers
+
+# FINAL VERIFICATION
+
+Before presenting completion:
+
+1. Run test database setup from scratch.
+2. Run all existing and new API tests.
+3. Run all frontend tests.
+4. Run the root test command.
+5. Run TypeScript typechecks.
+6. Build the API server.
+7. Build the web application.
+8. Review generated migrations.
+9. Review all cross-company authorization.
+10. Confirm no previous tests regressed.
+
+# DELIVERABLE
+
+When complete, provide:
+
+1. Module summary
+2. Database tables added
+3. Migrations added
+4. API routes added
+5. Screens added
+6. Permission rules implemented
+7. Notice targeting behaviour
+8. Delivery and read-tracking behaviour
+9. Version-history behaviour
+10. Scheduling behaviour
+11. Timeline integration
+12. Files changed
+13. Exact test commands
+14. Existing tests still passing
+15. New tests added
+16. Total passed, failed and skipped tests
+17. Typecheck result
+18. API build result
+19. Web build result
+20. Remaining limitations
+21. Git commit hash
+22. Confirmation that the commit was pushed to origin/main
+23. Confirmation that the working tree is clean
+
+Do not begin another module after completing this one.
+
+Stop after presenting the results so the commit can be independently audited.

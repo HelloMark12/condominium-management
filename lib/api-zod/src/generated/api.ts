@@ -789,6 +789,439 @@ export const AcceptInvitationResponse = zod.object({
 
 
 /**
+ * @summary List notices for a company (administrator only)
+ */
+export const GetCompanyNoticesParams = zod.object({
+  "companyId": zod.coerce.string()
+})
+
+export const GetCompanyNoticesQueryParams = zod.object({
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived', 'all']).optional(),
+  "category": zod.coerce.string().optional(),
+  "audience": zod.coerce.string().optional(),
+  "buildingId": zod.coerce.string().optional(),
+  "unitId": zod.coerce.string().optional()
+})
+
+export const GetCompanyNoticesResponseItem = zod.object({
+  "id": zod.string(),
+  "companyId": zod.string(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "publishedAt": zod.coerce.date().nullish(),
+  "archivedAt": zod.coerce.date().nullish(),
+  "versionNumber": zod.number(),
+  "createdByUserId": zod.string(),
+  "updatedByUserId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}).and(zod.object({
+  "deliveryStats": zod.object({
+  "totalRecipients": zod.number(),
+  "totalRead": zod.number(),
+  "readPercentage": zod.number()
+}).optional()
+}))
+export const GetCompanyNoticesResponse = zod.array(GetCompanyNoticesResponseItem)
+
+
+/**
+ * @summary Create a notice (administrator only)
+ */
+export const CreateNoticeParams = zod.object({
+  "companyId": zod.coerce.string()
+})
+
+
+
+export const createNoticeBodyPublishImmediatelyDefault = false;
+
+export const CreateNoticeBody = zod.object({
+  "title": zod.string().min(1),
+  "body": zod.string().min(1),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "buildingIds": zod.array(zod.string()).optional(),
+  "unitIds": zod.array(zod.string()).optional(),
+  "publishImmediately": zod.boolean().default(createNoticeBodyPublishImmediatelyDefault),
+  "scheduledPublishAt": zod.coerce.date().nullish()
+})
+
+export const CreateNoticeResponse = zod.object({
+  "id": zod.string(),
+  "companyId": zod.string(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "publishedAt": zod.coerce.date().nullish(),
+  "archivedAt": zod.coerce.date().nullish(),
+  "versionNumber": zod.number(),
+  "createdByUserId": zod.string(),
+  "updatedByUserId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Get notice detail (administrator only)
+ */
+export const GetCompanyNoticeParams = zod.object({
+  "companyId": zod.coerce.string(),
+  "noticeId": zod.coerce.string()
+})
+
+export const GetCompanyNoticeResponse = zod.object({
+  "id": zod.string(),
+  "companyId": zod.string(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "publishedAt": zod.coerce.date().nullish(),
+  "archivedAt": zod.coerce.date().nullish(),
+  "versionNumber": zod.number(),
+  "createdByUserId": zod.string(),
+  "updatedByUserId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}).and(zod.object({
+  "buildingIds": zod.array(zod.string()).optional(),
+  "unitIds": zod.array(zod.string()).optional()
+}))
+
+
+/**
+ * @summary Edit a notice (draft, scheduled, or published)
+ */
+export const UpdateNoticeParams = zod.object({
+  "companyId": zod.coerce.string(),
+  "noticeId": zod.coerce.string()
+})
+
+
+
+
+
+export const UpdateNoticeBody = zod.object({
+  "title": zod.string().min(1).optional(),
+  "body": zod.string().min(1).optional(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']).optional(),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']).optional(),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']).optional(),
+  "buildingIds": zod.array(zod.string()).optional(),
+  "unitIds": zod.array(zod.string()).optional(),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "editReason": zod.string().optional()
+})
+
+export const UpdateNoticeResponse = zod.object({
+  "id": zod.string(),
+  "companyId": zod.string(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "publishedAt": zod.coerce.date().nullish(),
+  "archivedAt": zod.coerce.date().nullish(),
+  "versionNumber": zod.number(),
+  "createdByUserId": zod.string(),
+  "updatedByUserId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Publish a draft or scheduled notice immediately
+ */
+export const PublishNoticeParams = zod.object({
+  "companyId": zod.coerce.string(),
+  "noticeId": zod.coerce.string()
+})
+
+export const PublishNoticeResponse = zod.object({
+  "id": zod.string(),
+  "companyId": zod.string(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "publishedAt": zod.coerce.date().nullish(),
+  "archivedAt": zod.coerce.date().nullish(),
+  "versionNumber": zod.number(),
+  "createdByUserId": zod.string(),
+  "updatedByUserId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Schedule a notice for future publication
+ */
+export const ScheduleNoticeParams = zod.object({
+  "companyId": zod.coerce.string(),
+  "noticeId": zod.coerce.string()
+})
+
+export const ScheduleNoticeBody = zod.object({
+  "scheduledPublishAt": zod.coerce.date()
+})
+
+export const ScheduleNoticeResponse = zod.object({
+  "id": zod.string(),
+  "companyId": zod.string(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "publishedAt": zod.coerce.date().nullish(),
+  "archivedAt": zod.coerce.date().nullish(),
+  "versionNumber": zod.number(),
+  "createdByUserId": zod.string(),
+  "updatedByUserId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Archive a notice
+ */
+export const ArchiveNoticeParams = zod.object({
+  "companyId": zod.coerce.string(),
+  "noticeId": zod.coerce.string()
+})
+
+export const ArchiveNoticeResponse = zod.object({
+  "id": zod.string(),
+  "companyId": zod.string(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "publishedAt": zod.coerce.date().nullish(),
+  "archivedAt": zod.coerce.date().nullish(),
+  "versionNumber": zod.number(),
+  "createdByUserId": zod.string(),
+  "updatedByUserId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Get version history for a published notice (administrator only)
+ */
+export const GetNoticeVersionsParams = zod.object({
+  "companyId": zod.coerce.string(),
+  "noticeId": zod.coerce.string()
+})
+
+export const GetNoticeVersionsResponseItem = zod.object({
+  "id": zod.string(),
+  "versionNumber": zod.number(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "targetingSnapshot": zod.object({
+  "targetingMode": zod.string().optional(),
+  "buildingIds": zod.array(zod.string()).optional(),
+  "unitIds": zod.array(zod.string()).optional()
+}).optional(),
+  "editedByUserId": zod.string().nullish(),
+  "editorName": zod.string().nullish(),
+  "editReason": zod.string().nullish(),
+  "createdAt": zod.coerce.date()
+})
+export const GetNoticeVersionsResponse = zod.array(GetNoticeVersionsResponseItem)
+
+
+/**
+ * @summary Get delivery and read statistics (administrator only)
+ */
+export const GetNoticeDeliveryParams = zod.object({
+  "companyId": zod.coerce.string(),
+  "noticeId": zod.coerce.string()
+})
+
+export const GetNoticeDeliveryResponse = zod.object({
+  "summary": zod.object({
+  "targetedBuildings": zod.number(),
+  "targetedApartments": zod.number(),
+  "totalRecipients": zod.number(),
+  "ownersDelivered": zod.number(),
+  "tenantsDelivered": zod.number(),
+  "totalRead": zod.number(),
+  "totalUnread": zod.number(),
+  "readPercentage": zod.number()
+}),
+  "deliveries": zod.array(zod.object({
+  "deliveryId": zod.string().optional(),
+  "userId": zod.string().optional(),
+  "recipientRole": zod.string().optional(),
+  "deliveredAt": zod.coerce.date().optional(),
+  "firstReadAt": zod.coerce.date().nullish(),
+  "lastReadAt": zod.coerce.date().nullish(),
+  "userName": zod.string().nullish(),
+  "userEmail": zod.string().nullish(),
+  "contexts": zod.array(zod.object({
+  "buildingId": zod.string().optional(),
+  "unitId": zod.string().nullish(),
+  "buildingName": zod.string().nullish(),
+  "unitNumber": zod.string().nullish()
+})).optional()
+}))
+})
+
+
+/**
+ * @summary Get notice feed for the current user
+ */
+export const GetMyNoticesQueryParams = zod.object({
+  "unreadOnly": zod.coerce.boolean().optional(),
+  "category": zod.coerce.string().optional(),
+  "buildingId": zod.coerce.string().optional(),
+  "unitId": zod.coerce.string().optional(),
+  "includeArchived": zod.coerce.boolean().optional()
+})
+
+export const GetMyNoticesResponseItem = zod.object({
+  "id": zod.string(),
+  "companyId": zod.string(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "publishedAt": zod.coerce.date().nullish(),
+  "archivedAt": zod.coerce.date().nullish(),
+  "versionNumber": zod.number(),
+  "createdByUserId": zod.string(),
+  "updatedByUserId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}).and(zod.object({
+  "delivery": zod.object({
+  "id": zod.string().nullish(),
+  "recipientRole": zod.string().nullish(),
+  "deliveredAt": zod.coerce.date().nullish(),
+  "firstReadAt": zod.coerce.date().nullish(),
+  "lastReadAt": zod.coerce.date().nullish(),
+  "lastReadVersion": zod.number().nullish(),
+  "isRead": zod.boolean().optional(),
+  "isUnread": zod.boolean().optional()
+}).optional()
+}))
+export const GetMyNoticesResponse = zod.array(GetMyNoticesResponseItem)
+
+
+/**
+ * @summary Get the unread notice count for the current user
+ */
+export const GetMyNoticesUnreadCountResponse = zod.object({
+  "unreadCount": zod.number()
+})
+
+
+/**
+ * @summary Get a notice detail and mark it as read
+ */
+export const GetMyNoticeParams = zod.object({
+  "noticeId": zod.coerce.string()
+})
+
+export const GetMyNoticeResponse = zod.object({
+  "id": zod.string(),
+  "companyId": zod.string(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "category": zod.enum(['general', 'emergency', 'planned_maintenance', 'cleaning', 'lift', 'agm_announcement', 'other']),
+  "audience": zod.enum(['owners_only', 'tenants_only', 'owners_and_tenants']),
+  "status": zod.enum(['draft', 'scheduled', 'published', 'archived']),
+  "targetingMode": zod.enum(['company_wide', 'buildings', 'apartments']),
+  "scheduledPublishAt": zod.coerce.date().nullish(),
+  "publishedAt": zod.coerce.date().nullish(),
+  "archivedAt": zod.coerce.date().nullish(),
+  "versionNumber": zod.number(),
+  "createdByUserId": zod.string(),
+  "updatedByUserId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}).and(zod.object({
+  "delivery": zod.object({
+  "id": zod.string().nullish(),
+  "recipientRole": zod.string().nullish(),
+  "deliveredAt": zod.coerce.date().nullish(),
+  "firstReadAt": zod.coerce.date().nullish(),
+  "lastReadAt": zod.coerce.date().nullish(),
+  "lastReadVersion": zod.number().nullish(),
+  "isRead": zod.boolean().optional(),
+  "isUnread": zod.boolean().optional()
+}).optional()
+}))
+
+
+/**
+ * @summary Mark a notice as read
+ */
+export const MarkNoticeReadParams = zod.object({
+  "noticeId": zod.coerce.string()
+})
+
+export const MarkNoticeReadResponse = zod.object({
+  "success": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Owner view of tenant delivery status for their apartments
+ */
+export const GetMyNoticeTenantDeliveryParams = zod.object({
+  "noticeId": zod.coerce.string()
+})
+
+export const GetMyNoticeTenantDeliveryResponseItem = zod.object({
+  "unitId": zod.string(),
+  "unitNumber": zod.string(),
+  "delivered": zod.boolean(),
+  "isRead": zod.boolean(),
+  "firstReadAt": zod.coerce.date().nullish(),
+  "tenantName": zod.string().nullish()
+})
+export const GetMyNoticeTenantDeliveryResponse = zod.array(GetMyNoticeTenantDeliveryResponseItem)
+
+
+/**
  * @summary Get all units owned by the current user (across all companies)
  */
 export const GetMyUnitsResponseItem = zod.object({

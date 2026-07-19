@@ -313,6 +313,167 @@ CREATE TRIGGER enforce_unit_building_company
   BEFORE INSERT OR UPDATE OF company_id, building_id ON units
   FOR EACH ROW EXECUTE FUNCTION check_unit_building_company();
 
+-- ── Step 10: Module 2 — Notices and Building Communication ───────────────────
+--
+-- Creates all tables, enums, indexes and constraints for the notices module.
+-- Idempotent: safe to re-run on a fully-migrated database.
+-- No permanent-deletion cascades — audit history is always preserved.
+
+-- Enums
+
+DO $$ BEGIN
+  CREATE TYPE notice_category AS ENUM (
+    'general', 'emergency', 'planned_maintenance',
+    'cleaning', 'lift', 'agm_announcement', 'other'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE notice_status AS ENUM ('draft', 'scheduled', 'published', 'archived');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE notice_audience AS ENUM ('owners_only', 'tenants_only', 'owners_and_tenants');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE notice_targeting_mode AS ENUM ('company_wide', 'buildings', 'apartments');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- notices
+
+CREATE TABLE IF NOT EXISTS notices (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id           UUID NOT NULL REFERENCES companies(id),
+  title                TEXT NOT NULL,
+  body                 TEXT NOT NULL,
+  category             notice_category NOT NULL,
+  audience             notice_audience NOT NULL,
+  status               notice_status NOT NULL DEFAULT 'draft',
+  targeting_mode       notice_targeting_mode NOT NULL,
+  scheduled_publish_at TIMESTAMPTZ,
+  published_at         TIMESTAMPTZ,
+  archived_at          TIMESTAMPTZ,
+  version_number       INTEGER NOT NULL DEFAULT 1,
+  created_by_user_id   UUID NOT NULL REFERENCES users(id),
+  updated_by_user_id   UUID REFERENCES users(id),
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notices_company_status
+  ON notices (company_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_notices_scheduled
+  ON notices (scheduled_publish_at, status);
+
+-- notice_building_targets
+
+CREATE TABLE IF NOT EXISTS notice_building_targets (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  notice_id   UUID NOT NULL REFERENCES notices(id),
+  company_id  UUID NOT NULL REFERENCES companies(id),
+  building_id UUID NOT NULL REFERENCES buildings(id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (notice_id, building_id)
+);
+
+-- notice_unit_targets
+
+CREATE TABLE IF NOT EXISTS notice_unit_targets (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  notice_id   UUID NOT NULL REFERENCES notices(id),
+  company_id  UUID NOT NULL REFERENCES companies(id),
+  unit_id     UUID NOT NULL REFERENCES units(id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (notice_id, unit_id)
+);
+
+-- notice_versions
+
+CREATE TABLE IF NOT EXISTS notice_versions (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  notice_id           UUID NOT NULL REFERENCES notices(id),
+  company_id          UUID NOT NULL REFERENCES companies(id),
+  version_number      INTEGER NOT NULL,
+  title               TEXT NOT NULL,
+  body                TEXT NOT NULL,
+  category            notice_category NOT NULL,
+  audience            notice_audience NOT NULL,
+  targeting_snapshot  JSONB NOT NULL,
+  edited_by_user_id   UUID REFERENCES users(id),
+  edit_reason         TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (notice_id, version_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notice_versions_notice
+  ON notice_versions (notice_id);
+
+-- notice_deliveries
+
+CREATE TABLE IF NOT EXISTS notice_deliveries (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  notice_id        UUID NOT NULL REFERENCES notices(id),
+  company_id       UUID NOT NULL REFERENCES companies(id),
+  user_id          UUID NOT NULL REFERENCES users(id),
+  recipient_role   TEXT NOT NULL,
+  delivered_at     TIMESTAMPTZ NOT NULL,
+  first_read_at    TIMESTAMPTZ,
+  last_read_at     TIMESTAMPTZ,
+  last_read_version INTEGER,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (notice_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nd_user_notice
+  ON notice_deliveries (user_id, notice_id);
+
+CREATE INDEX IF NOT EXISTS idx_nd_user_unread
+  ON notice_deliveries (user_id, first_read_at);
+
+CREATE INDEX IF NOT EXISTS idx_nd_notice_company
+  ON notice_deliveries (notice_id, company_id);
+
+-- notice_delivery_contexts
+
+CREATE TABLE IF NOT EXISTS notice_delivery_contexts (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  delivery_id         UUID NOT NULL REFERENCES notice_deliveries(id),
+  company_id          UUID NOT NULL REFERENCES companies(id),
+  building_id         UUID NOT NULL REFERENCES buildings(id),
+  unit_id             UUID REFERENCES units(id),
+  relationship_role   TEXT NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ndc_delivery
+  ON notice_delivery_contexts (delivery_id);
+
+-- building_timeline_events
+
+CREATE TABLE IF NOT EXISTS building_timeline_events (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id          UUID NOT NULL REFERENCES companies(id),
+  building_id         UUID NOT NULL REFERENCES buildings(id),
+  event_type          TEXT NOT NULL,
+  notice_id           UUID REFERENCES notices(id),
+  title               TEXT NOT NULL,
+  summary             TEXT,
+  metadata            JSONB,
+  created_by_user_id  UUID REFERENCES users(id),
+  event_at            TIMESTAMPTZ NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Prevent duplicate timeline entries when scheduled publishing fires twice
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bte_notice_dedup
+  ON building_timeline_events (building_id, event_type, notice_id)
+  WHERE notice_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_bte_building_event_at
+  ON building_timeline_events (building_id, event_at);
+
 -- ── Done ──────────────────────────────────────────────────────────────────────
 
 COMMIT;

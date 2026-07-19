@@ -5,3 +5,5 @@
 - [use-toast shim](use-toast-shim.md) — shadcn scaffold lacks use-toast.ts; create a Sonner-based shim at components/ui/use-toast.ts
 - [Billing DB-driven architecture](billing-db-driven.md) — all commercial thresholds from DB (pricing_configs); no hardcoded constants; snapshot columns on monthly_usage_records
 - [Test auth middleware pattern](test-auth-middleware.md) — x-test-clerk-user-id header bypasses Clerk in NODE_ENV=test; resolveUser auto-creates user rows in test mode
+- [Notice module migration quirks](notice-migration-quirks.md) — DO blocks need $$ not $; tables FK-cleanup order for tests
+- [Test API prefix](test-api-prefix.md) — all supertest calls must use /api/ prefix; sed-based bulk fixes miss double-quoted strings

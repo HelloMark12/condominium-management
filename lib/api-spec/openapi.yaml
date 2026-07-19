@@ -24,6 +24,8 @@ tags:
     description: Unit membership management
   - name: me
     description: Current user self-service
+  - name: notices
+    description: Notices and building communication
 
 paths:
   /healthz:
@@ -498,6 +500,332 @@ paths:
         "409":
           description: Invitation already accepted
 
+  # ── Notices (admin) ───────────────────────────────────────────────────────
+
+  /companies/{companyId}/notices:
+    get:
+      operationId: getCompanyNotices
+      tags: [notices]
+      summary: List notices for a company (administrator only)
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, scheduled, published, archived, all]
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: audience
+          in: query
+          schema:
+            type: string
+        - name: buildingId
+          in: query
+          schema:
+            type: string
+        - name: unitId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of notices with delivery stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NoticeListItem"
+        "403":
+          description: Forbidden
+    post:
+      operationId: createNotice
+      tags: [notices]
+      summary: Create a notice (administrator only)
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNoticeInput"
+      responses:
+        "201":
+          description: Notice created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notice"
+        "400":
+          description: Validation error
+        "403":
+          description: Forbidden
+
+  /companies/{companyId}/notices/{noticeId}:
+    get:
+      operationId: getCompanyNotice
+      tags: [notices]
+      summary: Get notice detail (administrator only)
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - $ref: "#/components/parameters/noticeId"
+      responses:
+        "200":
+          description: Notice detail with targets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoticeDetail"
+        "403":
+          description: Forbidden
+        "404":
+          description: Not found
+    patch:
+      operationId: updateNotice
+      tags: [notices]
+      summary: Edit a notice (draft, scheduled, or published)
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - $ref: "#/components/parameters/noticeId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNoticeInput"
+      responses:
+        "200":
+          description: Notice updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notice"
+        "400":
+          description: Validation error
+        "404":
+          description: Not found
+
+  /companies/{companyId}/notices/{noticeId}/publish:
+    post:
+      operationId: publishNotice
+      tags: [notices]
+      summary: Publish a draft or scheduled notice immediately
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - $ref: "#/components/parameters/noticeId"
+      responses:
+        "200":
+          description: Notice published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notice"
+        "400":
+          description: Already published or archived
+        "404":
+          description: Not found
+
+  /companies/{companyId}/notices/{noticeId}/schedule:
+    post:
+      operationId: scheduleNotice
+      tags: [notices]
+      summary: Schedule a notice for future publication
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - $ref: "#/components/parameters/noticeId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleNoticeInput"
+      responses:
+        "200":
+          description: Notice scheduled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notice"
+        "400":
+          description: Validation error
+        "404":
+          description: Not found
+
+  /companies/{companyId}/notices/{noticeId}/archive:
+    post:
+      operationId: archiveNotice
+      tags: [notices]
+      summary: Archive a notice
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - $ref: "#/components/parameters/noticeId"
+      responses:
+        "200":
+          description: Notice archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notice"
+        "400":
+          description: Already archived
+        "404":
+          description: Not found
+
+  /companies/{companyId}/notices/{noticeId}/versions:
+    get:
+      operationId: getNoticeVersions
+      tags: [notices]
+      summary: Get version history for a published notice (administrator only)
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - $ref: "#/components/parameters/noticeId"
+      responses:
+        "200":
+          description: Version history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NoticeVersion"
+        "403":
+          description: Forbidden
+        "404":
+          description: Not found
+
+  /companies/{companyId}/notices/{noticeId}/delivery:
+    get:
+      operationId: getNoticeDelivery
+      tags: [notices]
+      summary: Get delivery and read statistics (administrator only)
+      parameters:
+        - $ref: "#/components/parameters/companyId"
+        - $ref: "#/components/parameters/noticeId"
+      responses:
+        "200":
+          description: Delivery summary and per-recipient list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoticeDeliveryReport"
+        "403":
+          description: Forbidden
+        "404":
+          description: Not found
+
+  # ── Notices (resident feed) ────────────────────────────────────────────────
+
+  /me/notices:
+    get:
+      operationId: getMyNotices
+      tags: [notices]
+      summary: Get notice feed for the current user
+      parameters:
+        - name: unreadOnly
+          in: query
+          schema:
+            type: boolean
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: buildingId
+          in: query
+          schema:
+            type: string
+        - name: unitId
+          in: query
+          schema:
+            type: string
+        - name: includeArchived
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Notice feed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NoticeFeedItem"
+
+  /me/notices/unread-count:
+    get:
+      operationId: getMyNoticesUnreadCount
+      tags: [notices]
+      summary: Get the unread notice count for the current user
+      responses:
+        "200":
+          description: Unread count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnreadCount"
+
+  /me/notices/{noticeId}:
+    get:
+      operationId: getMyNotice
+      tags: [notices]
+      summary: Get a notice detail and mark it as read
+      parameters:
+        - $ref: "#/components/parameters/noticeId"
+      responses:
+        "200":
+          description: Notice detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoticeFeedItem"
+        "403":
+          description: Forbidden (not a recipient)
+        "404":
+          description: Not found
+
+  /me/notices/{noticeId}/read:
+    post:
+      operationId: markNoticeRead
+      tags: [notices]
+      summary: Mark a notice as read
+      parameters:
+        - $ref: "#/components/parameters/noticeId"
+      responses:
+        "200":
+          description: Marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "403":
+          description: Forbidden
+
+  /me/notices/{noticeId}/tenant-delivery:
+    get:
+      operationId: getMyNoticeTenantDelivery
+      tags: [notices]
+      summary: Owner view of tenant delivery status for their apartments
+      parameters:
+        - $ref: "#/components/parameters/noticeId"
+      responses:
+        "200":
+          description: Tenant delivery status per owned apartment
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TenantDeliveryStatus"
+        "403":
+          description: Forbidden (not an owner recipient)
+
   # ── Me (self-service) ──────────────────────────────────────────────────────
 
   /me/units:
@@ -552,6 +880,12 @@ components:
         type: string
     membershipId:
       name: membershipId
+      in: path
+      required: true
+      schema:
+        type: string
+    noticeId:
+      name: noticeId
       in: path
       required: true
       schema:
@@ -1042,3 +1376,352 @@ components:
         redirectTo:
           type: string
           description: Suggested frontend redirect path after acceptance
+
+    # ── Notices ───────────────────────────────────────────────────────────────
+
+    NoticeCategory:
+      type: string
+      enum:
+        - general
+        - emergency
+        - planned_maintenance
+        - cleaning
+        - lift
+        - agm_announcement
+        - other
+
+    NoticeStatus:
+      type: string
+      enum: [draft, scheduled, published, archived]
+
+    NoticeAudience:
+      type: string
+      enum: [owners_only, tenants_only, owners_and_tenants]
+
+    NoticeTargetingMode:
+      type: string
+      enum: [company_wide, buildings, apartments]
+
+    Notice:
+      type: object
+      required:
+        - id
+        - companyId
+        - title
+        - body
+        - category
+        - audience
+        - status
+        - targetingMode
+        - versionNumber
+        - createdByUserId
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        companyId:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        category:
+          $ref: "#/components/schemas/NoticeCategory"
+        audience:
+          $ref: "#/components/schemas/NoticeAudience"
+        status:
+          $ref: "#/components/schemas/NoticeStatus"
+        targetingMode:
+          $ref: "#/components/schemas/NoticeTargetingMode"
+        scheduledPublishAt:
+          type: ["string", "null"]
+          format: date-time
+        publishedAt:
+          type: ["string", "null"]
+          format: date-time
+        archivedAt:
+          type: ["string", "null"]
+          format: date-time
+        versionNumber:
+          type: integer
+        createdByUserId:
+          type: string
+        updatedByUserId:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    NoticeDetail:
+      allOf:
+        - $ref: "#/components/schemas/Notice"
+        - type: object
+          properties:
+            buildingIds:
+              type: array
+              items:
+                type: string
+            unitIds:
+              type: array
+              items:
+                type: string
+
+    NoticeDeliveryStats:
+      type: object
+      required: [totalRecipients, totalRead, readPercentage]
+      properties:
+        totalRecipients:
+          type: integer
+        totalRead:
+          type: integer
+        readPercentage:
+          type: integer
+
+    NoticeListItem:
+      allOf:
+        - $ref: "#/components/schemas/Notice"
+        - type: object
+          properties:
+            deliveryStats:
+              $ref: "#/components/schemas/NoticeDeliveryStats"
+
+    NoticeVersion:
+      type: object
+      required: [id, versionNumber, title, body, category, audience, createdAt]
+      properties:
+        id:
+          type: string
+        versionNumber:
+          type: integer
+        title:
+          type: string
+        body:
+          type: string
+        category:
+          $ref: "#/components/schemas/NoticeCategory"
+        audience:
+          $ref: "#/components/schemas/NoticeAudience"
+        targetingSnapshot:
+          type: object
+          additionalProperties: false
+          properties:
+            targetingMode:
+              type: string
+            buildingIds:
+              type: array
+              items:
+                type: string
+            unitIds:
+              type: array
+              items:
+                type: string
+        editedByUserId:
+          type: ["string", "null"]
+        editorName:
+          type: ["string", "null"]
+        editReason:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    NoticeDeliveryEntry:
+      type: object
+      properties:
+        deliveryId:
+          type: string
+        userId:
+          type: string
+        recipientRole:
+          type: string
+        deliveredAt:
+          type: string
+          format: date-time
+        firstReadAt:
+          type: ["string", "null"]
+          format: date-time
+        lastReadAt:
+          type: ["string", "null"]
+          format: date-time
+        userName:
+          type: ["string", "null"]
+        userEmail:
+          type: ["string", "null"]
+        contexts:
+          type: array
+          items:
+            type: object
+            properties:
+              buildingId:
+                type: string
+              unitId:
+                type: ["string", "null"]
+              buildingName:
+                type: ["string", "null"]
+              unitNumber:
+                type: ["string", "null"]
+
+    NoticeDeliveryReport:
+      type: object
+      required: [summary, deliveries]
+      properties:
+        summary:
+          type: object
+          required:
+            - targetedBuildings
+            - targetedApartments
+            - totalRecipients
+            - ownersDelivered
+            - tenantsDelivered
+            - totalRead
+            - totalUnread
+            - readPercentage
+          properties:
+            targetedBuildings:
+              type: integer
+            targetedApartments:
+              type: integer
+            totalRecipients:
+              type: integer
+            ownersDelivered:
+              type: integer
+            tenantsDelivered:
+              type: integer
+            totalRead:
+              type: integer
+            totalUnread:
+              type: integer
+            readPercentage:
+              type: integer
+        deliveries:
+          type: array
+          items:
+            $ref: "#/components/schemas/NoticeDeliveryEntry"
+
+    NoticeUserDelivery:
+      type: object
+      properties:
+        id:
+          type: ["string", "null"]
+        recipientRole:
+          type: ["string", "null"]
+        deliveredAt:
+          type: ["string", "null"]
+          format: date-time
+        firstReadAt:
+          type: ["string", "null"]
+          format: date-time
+        lastReadAt:
+          type: ["string", "null"]
+          format: date-time
+        lastReadVersion:
+          type: ["integer", "null"]
+        isRead:
+          type: boolean
+        isUnread:
+          type: boolean
+
+    NoticeFeedItem:
+      allOf:
+        - $ref: "#/components/schemas/Notice"
+        - type: object
+          properties:
+            delivery:
+              $ref: "#/components/schemas/NoticeUserDelivery"
+
+    UnreadCount:
+      type: object
+      required: [unreadCount]
+      properties:
+        unreadCount:
+          type: integer
+
+    TenantDeliveryStatus:
+      type: object
+      required: [unitId, unitNumber, delivered, isRead]
+      properties:
+        unitId:
+          type: string
+        unitNumber:
+          type: string
+        delivered:
+          type: boolean
+        isRead:
+          type: boolean
+        firstReadAt:
+          type: ["string", "null"]
+          format: date-time
+        tenantName:
+          type: ["string", "null"]
+
+    CreateNoticeInput:
+      type: object
+      required: [title, body, category, audience, targetingMode]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        body:
+          type: string
+          minLength: 1
+        category:
+          $ref: "#/components/schemas/NoticeCategory"
+        audience:
+          $ref: "#/components/schemas/NoticeAudience"
+        targetingMode:
+          $ref: "#/components/schemas/NoticeTargetingMode"
+        buildingIds:
+          type: array
+          items:
+            type: string
+        unitIds:
+          type: array
+          items:
+            type: string
+        publishImmediately:
+          type: boolean
+          default: false
+        scheduledPublishAt:
+          type: ["string", "null"]
+          format: date-time
+
+    UpdateNoticeInput:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+        body:
+          type: string
+          minLength: 1
+        category:
+          $ref: "#/components/schemas/NoticeCategory"
+        audience:
+          $ref: "#/components/schemas/NoticeAudience"
+        targetingMode:
+          $ref: "#/components/schemas/NoticeTargetingMode"
+        buildingIds:
+          type: array
+          items:
+            type: string
+        unitIds:
+          type: array
+          items:
+            type: string
+        scheduledPublishAt:
+          type: ["string", "null"]
+          format: date-time
+        editReason:
+          type: string
+
+    ScheduleNoticeInput:
+      type: object
+      required: [scheduledPublishAt]
+      properties:
+        scheduledPublishAt:
+          type: string
+          format: date-time
