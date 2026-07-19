@@ -8,7 +8,7 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "NODE_ENV=test vitest run --config vitest.config.ts",
+    "test": "bash ../../scripts/setup-test-db.sh && NODE_ENV=test vitest run --config vitest.config.ts",
     "test:watch": "NODE_ENV=test vitest --config vitest.config.ts"
   },
   "dependencies": {

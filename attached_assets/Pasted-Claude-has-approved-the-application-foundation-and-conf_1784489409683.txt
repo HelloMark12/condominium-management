@@ -1,0 +1,90 @@
+Claude has approved the application foundation and confirmed that the ten outstanding audit issues are fixed.
+
+Before beginning the next product module, complete this small test and operational documentation improvement.
+
+1. Automated test database setup
+
+The API test suite currently depends on the enforce_unit_building_company PostgreSQL trigger created by:
+
+lib/db/migrate.sql
+
+A fresh test database created using only drizzle-kit push does not contain this trigger, causing two migration tests to fail unless migrate.sql is run manually.
+
+Update the API test setup so the required migration runs automatically before the test suite.
+
+Preferred approach:
+
+* Add a dedicated test database setup script.
+* Run drizzle-kit push for the base schema.
+* Run:
+
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f lib/db/migrate.sql
+
+* Then execute Vitest.
+
+The setup must:
+
+* Use only the isolated test DATABASE_URL.
+* Never modify development or production data.
+* Run non-interactively.
+* Stop immediately if the migration fails.
+* Work without Clerk secrets.
+* Be repeatable.
+* Avoid creating duplicate or conflicting state.
+
+A new developer should be able to run one documented API test command and receive all 89 passing tests without performing an undocumented manual migration step.
+
+2. Primary operational documentation
+
+Update replit.md so its Run & Operate section clearly distinguishes:
+
+Fresh development database:
+
+pnpm --filter @workspace/db run push
+
+Existing staging or production database upgrade:
+
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f lib/db/migrate.sql
+
+Explain briefly that drizzle-kit push is intended for fresh development databases, while migrate.sql is the supported non-interactive upgrade path for existing databases.
+
+3. Root test command
+
+Add a convenient root-level command that runs:
+
+* API tests
+* Frontend tests
+
+For example:
+
+pnpm test
+
+The command should return a non-zero exit code if either suite fails.
+
+4. Verification
+
+After making the changes:
+
+* Create a fresh isolated test database.
+* Run the new documented test setup from scratch.
+* Confirm the trigger is installed automatically.
+* Run the API tests with no Clerk environment variables.
+* Run the frontend tests.
+* Run the root test command.
+* Confirm 149 tests pass.
+* Run TypeScript typechecking.
+* Build the API server and web application.
+
+Commit and push the changes to origin/main.
+
+Provide:
+
+* Files changed
+* Exact test commands
+* Passed and failed totals
+* Typecheck results
+* Build results
+* Commit hash
+* Confirmation that the working tree is clean
+
+After this housekeeping commit, stop. Do not begin the next product module in the same change.
