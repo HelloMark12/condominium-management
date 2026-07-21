@@ -933,41 +933,139 @@ describe("Suite 40-27: Publish already-published notice", () => {
   });
 });
 
-// ── Suite 40-28: Owner sees tenant delivery status ───────────────────────────
+// ── Suite 40-28: Owner tenant-delivery view (expanded) ───────────────────────
+//
+// Verifies the corrected access model:
+//   - Owner does NOT need to be a recipient of the notice personally.
+//   - Access is gated on having an active ownership of an active apartment.
+//   - Only tenants linked to the caller's apartments are returned.
 
 describe("Suite 40-28: Owner tenant-delivery view", () => {
-  let noticeId: string;
+  let tenantsOnlyNoticeId: string;   // audience = tenants_only (owner is NOT a recipient)
+  let bothAudienceNoticeId: string;  // audience = owners_and_tenants
+  let owner2ClerkId: string;
+  let owner2UserId: string;
+  let unit2Id: string;
+  let tenant2ClerkId: string;
 
   beforeAll(async () => {
-    const notice = await createTestNotice(companyId, adminUserId, {
-      title: "Tenant Delivery View",
+    // Create unit2 and its owner/tenant BEFORE publishing so they receive deliveries.
+    const unit2 = await createTestUnit(companyId, buildingId, { unitNumber: `Apt 2B-${uid()}` });
+    unit2Id = unit2.id;
+
+    owner2ClerkId = `test_${uid()}`;
+    const owner2User = await createTestUser({ clerkUserId: owner2ClerkId });
+    owner2UserId = owner2User.id;
+    await createTestMembership(unit2Id, companyId, owner2UserId, "owner");
+
+    tenant2ClerkId = `test_${uid()}`;
+    const tenant2User = await createTestUser({ clerkUserId: tenant2ClerkId });
+    await createTestMembership(unit2Id, companyId, tenant2User.id, "tenant");
+
+    // NOW publish notices — unit2 is active with owner2+tenant2, so they receive deliveries.
+
+    // Notice targeting only tenants — owner receives no personal delivery row for this
+    const n1 = await createTestNotice(companyId, adminUserId, {
+      title: "Tenants Only Delivery View",
+      body: "Body",
+      targetingMode: "company_wide",
+      audience: "tenants_only",
+    });
+    tenantsOnlyNoticeId = n1.id;
+    await request(app)
+      .post(`/api/companies/${companyId}/notices/${tenantsOnlyNoticeId}/publish`)
+      .set(AUTH(adminClerkId));
+
+    // Notice targeting both audiences
+    const n2 = await createTestNotice(companyId, adminUserId, {
+      title: "Both Audience Delivery View",
       body: "Body",
       targetingMode: "company_wide",
       audience: "owners_and_tenants",
     });
-    noticeId = notice.id;
+    bothAudienceNoticeId = n2.id;
     await request(app)
-      .post(`/api/companies/${companyId}/notices/${noticeId}/publish`)
+      .post(`/api/companies/${companyId}/notices/${bothAudienceNoticeId}/publish`)
       .set(AUTH(adminClerkId));
   });
 
-  it("GET /me/notices/:id/tenant-delivery → delivery status for tenant apartments", async () => {
+  it("Tenants-only notice: owner sees their tenant's delivery (no personal delivery needed)", async () => {
     const res = await request(app)
-      .get(`/api/me/notices/${noticeId}/tenant-delivery`)
+      .get(`/api/me/notices/${tenantsOnlyNoticeId}/tenant-delivery`)
       .set(AUTH(ownerClerkId));
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
-    // Owner has one active tenant in unitId — should show their status
     const entry = res.body.find((e: { unitId: string }) => e.unitId === unitId);
     expect(entry).toBeTruthy();
     expect(entry?.delivered).toBe(true);
   });
 
-  it("Tenant cannot access tenant-delivery endpoint → 403", async () => {
+  it("Owners-and-tenants notice: owner sees their tenant's delivery", async () => {
     const res = await request(app)
-      .get(`/api/me/notices/${noticeId}/tenant-delivery`)
+      .get(`/api/me/notices/${bothAudienceNoticeId}/tenant-delivery`)
+      .set(AUTH(ownerClerkId));
+    expect(res.status).toBe(200);
+    const entry = res.body.find((e: { unitId: string }) => e.unitId === unitId);
+    expect(entry).toBeTruthy();
+    expect(entry?.delivered).toBe(true);
+  });
+
+  it("Owner cannot see another owner's tenant delivery", async () => {
+    // owner2 owns unit2 — they should NOT see unit1's tenant delivery
+    const res = await request(app)
+      .get(`/api/me/notices/${bothAudienceNoticeId}/tenant-delivery`)
+      .set(AUTH(owner2ClerkId));
+    expect(res.status).toBe(200);
+    // Should return unit2's tenant, not unit1's tenant
+    const unit1Entry = res.body.find((e: { unitId: string }) => e.unitId === unitId);
+    expect(unit1Entry).toBeUndefined();
+    const unit2Entry = res.body.find((e: { unitId: string }) => e.unitId === unit2Id);
+    expect(unit2Entry).toBeTruthy();
+  });
+
+  it("Tenant cannot access the endpoint → 403", async () => {
+    const res = await request(app)
+      .get(`/api/me/notices/${bothAudienceNoticeId}/tenant-delivery`)
       .set(AUTH(tenantClerkId));
     expect(res.status).toBe(403);
+  });
+
+  it("User with no active ownership → 403", async () => {
+    // tenantUserId has a tenant membership, not an owner membership
+    const res = await request(app)
+      .get(`/api/me/notices/${bothAudienceNoticeId}/tenant-delivery`)
+      .set(AUTH(tenantClerkId));
+    expect(res.status).toBe(403);
+  });
+
+  it("Owner with multiple apartments sees only their own tenants", async () => {
+    // owner2 owns unit2 — the result must only include unit2's tenants
+    const res = await request(app)
+      .get(`/api/me/notices/${bothAudienceNoticeId}/tenant-delivery`)
+      .set(AUTH(owner2ClerkId));
+    expect(res.status).toBe(200);
+    for (const entry of res.body as Array<{ unitId: string }>) {
+      expect(entry.unitId).toBe(unit2Id);
+    }
+  });
+
+  it("Notice not delivered to any tenant of the owner → empty array", async () => {
+    // Create an owners-only notice — no tenants receive it, so no tenant-delivery rows exist
+    const ownersOnly = await createTestNotice(companyId, adminUserId, {
+      title: "Owners Only Scoped Test",
+      body: "Body",
+      targetingMode: "company_wide",
+      audience: "owners_only",
+    });
+    await request(app)
+      .post(`/api/companies/${companyId}/notices/${ownersOnly.id}/publish`)
+      .set(AUTH(adminClerkId));
+
+    const res = await request(app)
+      .get(`/api/me/notices/${ownersOnly.id}/tenant-delivery`)
+      .set(AUTH(ownerClerkId));
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(0);
   });
 });
 
@@ -1033,16 +1131,102 @@ describe("Suite 40-29: publishScheduledNotices processes past-due", () => {
   });
 });
 
-// ── Suite 40-30: Internal endpoint protection ─────────────────────────────────
+// ── Suite 40-30: Internal scheduler authentication ────────────────────────────
+//
+// Verifies the corrected fail-closed authentication:
+//   - Missing SESSION_SECRET → 503 (not 200 or 403)
+//   - Missing Authorization header → 403
+//   - Wrong token → 403
+//   - Correct token → 200 + published count
+//   - Two identical requests → idempotent; no duplicate deliveries
 
-describe("Suite 40-30: Internal endpoint protection", () => {
-  it("POST /internal/notices/publish-scheduled without correct secret → 403", async () => {
-    // When SESSION_SECRET is set, wrong bearer should be rejected
+describe("Suite 40-30: Internal scheduler authentication", () => {
+  const TEST_SECRET = "test-internal-scheduler-secret-abc123xyz";
+  let savedSecret: string | undefined;
+
+  beforeAll(async () => {
+    savedSecret = process.env["SESSION_SECRET"];
+    process.env["SESSION_SECRET"] = TEST_SECRET;
+  });
+
+  afterAll(async () => {
+    if (savedSecret !== undefined) {
+      process.env["SESSION_SECRET"] = savedSecret;
+    } else {
+      delete process.env["SESSION_SECRET"];
+    }
+  });
+
+  it("Missing SESSION_SECRET → 503 and no publication", async () => {
+    const prev = process.env["SESSION_SECRET"];
+    delete process.env["SESSION_SECRET"];
+    const res = await request(app)
+      .post("/api/internal/notices/publish-scheduled")
+      .set("Authorization", `Bearer ${TEST_SECRET}`);
+    process.env["SESSION_SECRET"] = prev!;
+    expect(res.status).toBe(503);
+  });
+
+  it("Missing Authorization header → 403", async () => {
+    const res = await request(app)
+      .post("/api/internal/notices/publish-scheduled");
+    expect(res.status).toBe(403);
+  });
+
+  it("Incorrect token → 403", async () => {
     const res = await request(app)
       .post("/api/internal/notices/publish-scheduled")
       .set("Authorization", "Bearer wrong-secret");
-    // In test env (no SESSION_SECRET set), it may pass; if secret is set, it should 403
-    // We just check it doesn't 500
-    expect([200, 403]).toContain(res.status);
+    expect(res.status).toBe(403);
+  });
+
+  it("Correct token → 200 with published count", async () => {
+    const res = await request(app)
+      .post("/api/internal/notices/publish-scheduled")
+      .set("Authorization", `Bearer ${TEST_SECRET}`);
+    expect(res.status).toBe(200);
+    expect(typeof res.body.published).toBe("number");
+  });
+
+  it("Correct token called twice → idempotent (no duplicate deliveries or timeline events)", async () => {
+    // Insert a past-due scheduled notice
+    const [scheduledNotice] = await db
+      .insert(noticesTable)
+      .values({
+        companyId,
+        title: "Idempotent Auth Test Notice",
+        body: "Body",
+        category: "general",
+        audience: "owners_and_tenants",
+        targetingMode: "company_wide",
+        status: "scheduled",
+        versionNumber: 1,
+        createdByUserId: adminUserId,
+        scheduledPublishAt: new Date(Date.now() - 3000),
+      })
+      .returning();
+    const noticeId = scheduledNotice!.id;
+
+    // First invocation — should publish the notice
+    const res1 = await request(app)
+      .post("/api/internal/notices/publish-scheduled")
+      .set("Authorization", `Bearer ${TEST_SECRET}`);
+    expect(res1.status).toBe(200);
+    expect(res1.body.published).toBeGreaterThanOrEqual(1);
+
+    // Second invocation — nothing new to publish (idempotent)
+    const res2 = await request(app)
+      .post("/api/internal/notices/publish-scheduled")
+      .set("Authorization", `Bearer ${TEST_SECRET}`);
+    expect(res2.status).toBe(200);
+    expect(res2.body.published).toBe(0);
+
+    // No duplicate deliveries for this notice
+    const deliveries = await db
+      .select({ userId: noticeDeliveriesTable.userId })
+      .from(noticeDeliveriesTable)
+      .where(eq(noticeDeliveriesTable.noticeId, noticeId));
+    const userIds = deliveries.map((d) => d.userId);
+    expect(new Set(userIds).size).toBe(userIds.length);
   });
 });

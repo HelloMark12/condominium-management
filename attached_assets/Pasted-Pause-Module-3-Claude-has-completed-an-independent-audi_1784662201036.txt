@@ -1,0 +1,220 @@
+Pause Module 3.
+
+Claude has completed an independent audit of Module 2 commit:
+
+9921cbb4ddb2f2e0bc0f1418be913436f8334553
+
+The result is “Approved with corrections required.”
+
+Do not add Documents, Maintenance, Finance, Voting, Payments or AI features yet.
+
+Implement the following Module 2 correction cycle.
+
+# 1. FIX INTERNAL SCHEDULER AUTHENTICATION
+
+Route:
+
+POST /api/internal/notices/publish-scheduled
+
+Current defect:
+
+If SESSION_SECRET is missing, authentication is skipped and the endpoint runs unauthenticated.
+
+Required behaviour:
+
+- If SESSION_SECRET is missing or blank, reject the request.
+- Do not execute scheduled publication.
+- Return a clear server configuration error, such as HTTP 503.
+- Do not fail open.
+- Require an exact Bearer token match when configured.
+- Use a timing-safe comparison where practical.
+- Do not log or expose the configured secret.
+- Keep production and test behaviour deterministic.
+
+Add tests proving:
+
+- Missing SESSION_SECRET → rejected and no notices published.
+- Incorrect token → 403 and no notices published.
+- Missing Authorization header → 403.
+- Correct token → scheduled notices publish.
+- Correct token used twice → idempotent, no duplicate deliveries or timeline events.
+
+# 2. FIX OWNER TENANT-DELIVERY ACCESS
+
+Route:
+
+GET /api/me/notices/:noticeId/tenant-delivery
+
+Current defect:
+
+The route requires the owner to have their own owner delivery row. This blocks owners from seeing their tenant’s delivery for tenants-only notices.
+
+Required behaviour:
+
+An owner may access tenant-delivery information when:
+
+- They currently have an active ownership relationship with an active apartment.
+- The notice was delivered to a tenant through that apartment.
+
+The owner must not need to have received the notice personally.
+
+Return only:
+
+- Tenant name
+- Apartment
+- Delivery status
+- Read/unread status
+- Read time
+
+Do not expose:
+
+- Tenant email
+- Tenant phone
+- Other owners
+- Tenants belonging to apartments the caller does not own
+- Full building recipient lists
+
+Add tests covering:
+
+- Tenants-only notice: owner sees their tenant’s delivery.
+- Owners-and-tenants notice: owner sees their tenant’s delivery.
+- Owner cannot see another owner’s tenant.
+- Tenant cannot access the endpoint.
+- Owner with revoked or archived ownership cannot access.
+- Owner with multiple apartments only sees tenants linked to apartments they actively own.
+- Notice delivered through a different apartment does not leak into the result.
+
+# 3. FRONTEND TEST COVERAGE
+
+Add meaningful frontend automated tests for Module 2.
+
+At minimum cover:
+
+Administrator:
+- Notice list renders.
+- Create-notice required-field validation.
+- Building and apartment target selection.
+- Audience selection.
+- Scheduled-date validation.
+- Cross-role route protection.
+
+Owner:
+- Notice feed renders.
+- Unread badge renders.
+- Emergency notice styling.
+- Updated label.
+- Tenant-delivery panel for tenants-only notice.
+- Tenant-delivery data is scoped to owned apartments.
+
+Tenant:
+- Notice feed renders.
+- Unread badge renders.
+- Cannot access owner tenant-delivery view.
+- Cannot access admin notice pages.
+
+Do not rely only on mocked helper functions. Test the page and component behaviour.
+
+# 4. HOME DASHBOARD UNREAD COUNTS
+
+Add unread notice cards or indicators to:
+
+- OwnerHomePage
+- TenantHomePage
+
+Use the existing backend unread-count endpoint.
+
+The count must not rely only on local frontend state.
+
+Add frontend tests.
+
+# 5. MALTA TIMEZONE SCHEDULING
+
+The administrator UI currently uses datetime-local and browser-local conversion while labelling the value as Europe/Malta.
+
+Fix this so the selected date and time are explicitly interpreted as Europe/Malta regardless of the administrator’s device timezone.
+
+Requirements:
+
+- Store the resulting timestamp as UTC.
+- Display the resolved Malta date/time for confirmation.
+- Handle Malta daylight-saving transitions.
+- Reject invalid or nonexistent local times clearly.
+- Do not silently use the browser’s timezone.
+
+Add unit and frontend tests for:
+
+- Browser/device timezone different from Malta.
+- Winter Malta time.
+- Summer Malta time.
+- DST transition boundary.
+
+# 6. FIX BILLING ACTIVE-COUNT CONCURRENCY RACE
+
+File:
+
+artifacts/api-server/src/routes/units.ts
+
+Claude reproduced a TOCTOU race in activeUnitCount during parallel apartment creation.
+
+Current issue:
+
+- activeUnitCount is calculated using a separate SELECT COUNT(*).
+- It is later written as a plain overwrite.
+- Concurrent requests can leave activeUnitCount lower than the real number of active apartments.
+
+Required behaviour:
+
+- activeUnitCount must remain correct under concurrent create, archive and restore operations.
+- monthly peak must remain correct.
+- Use an atomic database update, transaction, lock or reliable recount-after-write approach.
+- Do not weaken the existing peak-based billing logic.
+
+Add repeated genuine concurrency tests:
+
+- 5 parallel apartment creations.
+- Parallel create and archive.
+- Parallel restore operations.
+- Assert database active count equals the real active apartment count after every operation.
+- Run the concurrency test repeatedly to ensure it is stable.
+
+# 7. CLEANUP AND MAINTAINABILITY
+
+- Correct the misleading comment in editPublishedNotice().
+- Update the unread-count emergency logic to explicitly use version comparison where practical instead of relying on the reset-to-null invariant.
+- Update Module 2 documentation to accurately describe the implemented unread behaviour.
+- Clarify whether published notice audience and targets are intentionally immutable. Document the rule.
+
+# VERIFICATION
+
+Preserve all existing tests.
+
+Run:
+
+- Fresh isolated test database setup
+- API tests
+- Frontend tests
+- Root test command
+- Repeated concurrency test run
+- TypeScript typecheck
+- API build
+- Web build
+
+Report:
+
+1. Files changed
+2. Routes changed
+3. Tests added
+4. Previous test total
+5. New test total
+6. Passed, failed and skipped totals
+7. Concurrency test repetitions and results
+8. Typecheck results
+9. Build results
+10. Remaining limitations
+11. Git commit hash
+12. Confirmation pushed to origin/main
+13. Confirmation working tree is clean
+
+Stop after this correction cycle.
+
+Do not begin Module 3 until the new commit has been independently re-audited.

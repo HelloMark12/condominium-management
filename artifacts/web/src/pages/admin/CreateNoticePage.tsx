@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeft, AlertCircle } from "lucide-react";
+import { ArrowLeft, AlertCircle, Info } from "lucide-react";
 import { Link } from "wouter";
 import {
   useCreateNotice,
@@ -18,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useQueryClient } from "@tanstack/react-query";
 import { CATEGORY_LABELS, AUDIENCE_LABELS, TARGETING_LABELS } from "@/components/notices/NoticeBadges";
 import { toast } from "@/components/ui/use-toast";
+import { maltaLocalToUtc, formatMaltaTime } from "@/lib/maltaTime";
 
 type TargetingMode = "company_wide" | "buildings" | "apartments";
 type Audience = "owners_only" | "tenants_only" | "owners_and_tenants";
@@ -66,6 +67,32 @@ export default function CreateNoticePage() {
     );
   }
 
+  /**
+   * Resolve the scheduling datetime.
+   * The datetime-local input is always interpreted as Europe/Malta time,
+   * regardless of the administrator's device/browser timezone.
+   * Returns the UTC ISO string to send to the API, or null + error on failure.
+   */
+  function resolveScheduledUtc(): { utcIso: string; displayLabel: string } | null {
+    if (!scheduledDate) return null;
+
+    const utc = maltaLocalToUtc(scheduledDate);
+    if (!utc) {
+      setError(
+        "The selected time does not exist in Europe/Malta. " +
+        "This can happen during a daylight-saving transition. Please choose a different time."
+      );
+      return null;
+    }
+
+    if (utc <= new Date()) {
+      setError("Scheduled time must be in the future (Europe/Malta).");
+      return null;
+    }
+
+    return { utcIso: utc.toISOString(), displayLabel: formatMaltaTime(utc) };
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -76,9 +103,13 @@ export default function CreateNoticePage() {
       setError("Select at least one building");
       return;
     }
+
+    let scheduledPublishAt: string | null = null;
+
     if (!publishImmediately && scheduledDate) {
-      const dt = new Date(scheduledDate);
-      if (dt <= new Date()) { setError("Scheduled time must be in the future"); return; }
+      const resolved = resolveScheduledUtc();
+      if (!resolved) return; // error was set inside resolveScheduledUtc
+      scheduledPublishAt = resolved.utcIso;
     }
 
     createNotice.mutate({
@@ -92,10 +123,18 @@ export default function CreateNoticePage() {
         buildingIds: targetingMode === "buildings" ? selectedBuildingIds : [],
         unitIds: [],
         publishImmediately,
-        scheduledPublishAt: !publishImmediately && scheduledDate ? new Date(scheduledDate).toISOString() : null,
+        scheduledPublishAt,
       },
     });
   }
+
+  // Resolve Malta display label for live preview while the user types
+  const maltaPreview = (() => {
+    if (!scheduledDate || publishImmediately) return null;
+    const utc = maltaLocalToUtc(scheduledDate);
+    if (!utc) return "⚠ This time does not exist in Malta (DST gap)";
+    return formatMaltaTime(utc);
+  })();
 
   return (
     <div className="p-6 md:p-8 max-w-2xl space-y-6">
@@ -124,7 +163,6 @@ export default function CreateNoticePage() {
                 placeholder="Notice title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                required
               />
             </div>
 
@@ -136,7 +174,6 @@ export default function CreateNoticePage() {
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 rows={6}
-                required
               />
             </div>
 
@@ -242,7 +279,19 @@ export default function CreateNoticePage() {
                   value={scheduledDate}
                   onChange={(e) => setScheduledDate(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">Europe/Malta time. Leave blank to save as draft.</p>
+                {/* Live Malta time preview — shown regardless of device timezone */}
+                {maltaPreview ? (
+                  <div className="flex items-start gap-1.5 text-xs mt-1">
+                    <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-muted-foreground" />
+                    <span className={maltaPreview.startsWith("⚠") ? "text-destructive" : "text-muted-foreground"}>
+                      {maltaPreview}
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Enter date and time — always interpreted as <strong>Europe/Malta</strong> time.
+                  </p>
+                )}
               </div>
             )}
           </CardContent>

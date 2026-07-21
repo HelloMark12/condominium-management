@@ -28,19 +28,21 @@ const router = Router();
 //   current active count.  When archiving apartments the active count falls,
 //   but the peak must never decrease.
 //
+// CONCURRENCY FIX (Correction 6):
+//   activeUnitCount is now computed INSIDE a transaction that holds a
+//   per-company advisory lock.  This prevents TOCTOU races where two
+//   concurrent creates/archives/restores both read the same stale count
+//   and then overwrite each other's update with the wrong value.
+//
 //   Implementation:
-//     1. When an existing open record exists, compute the effective new peak
-//        as Math.max(existing.peakActiveUnitCount, currentActiveCount).
-//     2. Pass that newPeak to calculateTier() and calculateEstimatedAmountCents().
-//     3. The DB column is still updated atomically via GREATEST() to guard
-//        against concurrent requests arriving between the read and the write.
-//     4. Storing tier/estimate from the pre-computed newPeak is equivalent to
-//        the GREATEST() result and avoids a second round-trip.
+//     1. Acquire pg_advisory_xact_lock(hashtext(companyId)) — released
+//        automatically when the transaction commits or rolls back.
+//     2. Recount active apartments inside the lock.
+//     3. Use that count for all writes.  GREATEST() on peak_active_unit_count
+//        is kept as a belt-and-suspenders defence against any future code
+//        that calls outside this function.
 
-async function updateMonthlyUsage(
-  companyId: string,
-  currentActiveCount: number,
-): Promise<void> {
+async function updateMonthlyUsage(companyId: string): Promise<void> {
   const billingMonth = getCurrentBillingMonth();
 
   let config;
@@ -58,124 +60,138 @@ async function updateMonthlyUsage(
     return;
   }
 
-  // Check for existing open record
-  const [existing] = await db
-    .select()
-    .from(monthlyUsageRecordsTable)
-    .where(
-      and(
-        eq(monthlyUsageRecordsTable.companyId, companyId),
-        eq(monthlyUsageRecordsTable.billingMonth, billingMonth),
-      ),
-    )
-    .limit(1);
+  await db.transaction(async (tx) => {
+    // Acquire a per-company advisory lock for the duration of this transaction.
+    // pg_advisory_xact_lock blocks until the lock is available, serializing
+    // concurrent billing updates for the same company without affecting others.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${companyId})::bigint)`,
+    );
 
-  if (existing) {
-    if (existing.invoiceStatus === "finalised") {
-      // Finalised records must not be recalculated
-      return;
-    }
+    // Recount active apartments inside the lock — guaranteed to observe the
+    // committed result of whichever unit operation triggered this call.
+    const [countResult] = await tx
+      .select({ n: count() })
+      .from(unitsTable)
+      .where(
+        and(
+          eq(unitsTable.companyId, companyId),
+          eq(unitsTable.status, "active"),
+          eq(unitsTable.unitType, "apartment"),
+        ),
+      );
+    const currentActiveCount = Number(countResult?.n ?? 0);
 
-    // PEAK FIX: compute the new peak explicitly so tier/estimate are peak-based.
-    // Using Math.max here is safe: the DB GREATEST() below handles any race
-    // where another request incremented the peak concurrently between our
-    // SELECT and UPDATE.  In that race the DB stores the higher value but
-    // our tier/estimate calculation may be slightly stale — the next call will
-    // correct it.  This is acceptable: the peak never decreases within a month.
-    const newPeak = Math.max(existing.peakActiveUnitCount, currentActiveCount);
-    const tier = calculateTier(newPeak, config, override);
-    const estimated = calculateEstimatedAmountCents(newPeak, config, override);
-    const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
-
-    // Atomic GREATEST() update prevents race conditions in concurrent requests
-    await db
-      .update(monthlyUsageRecordsTable)
-      .set({
-        activeUnitCount: currentActiveCount,
-        peakActiveUnitCount: sql`GREATEST(${monthlyUsageRecordsTable.peakActiveUnitCount}, ${currentActiveCount})`,
-        subscriptionTier: tier,
-        ratePerUnitCents: rate,
-        estimatedAmountCents: estimated,
-        pricingConfigId: config.id,
-        companyOverrideId: override?.id ?? null,
-        snapshotFreeUnitLimit: config.freeUnitLimit,
-        snapshotStandardMin: config.standardMin,
-        snapshotStandardMax: config.standardMax,
-        snapshotEnterpriseStart: config.enterpriseStart,
-        snapshotRatePerUnitCents: config.ratePerUnitCents,
-        snapshotEnterpriseBehavior: config.enterprisePricingBehavior,
-        snapshotCurrency: config.currency,
-        updatedAt: new Date(),
-      })
+    // Check for existing open record
+    const [existing] = await tx
+      .select()
+      .from(monthlyUsageRecordsTable)
       .where(
         and(
           eq(monthlyUsageRecordsTable.companyId, companyId),
           eq(monthlyUsageRecordsTable.billingMonth, billingMonth),
-          ne(monthlyUsageRecordsTable.invoiceStatus, "finalised"),
         ),
-      );
-  } else {
-    // New record: peak equals current count (first observation this month)
-    const tier = calculateTier(currentActiveCount, config, override);
-    const estimated = calculateEstimatedAmountCents(currentActiveCount, config, override);
-    const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
+      )
+      .limit(1);
 
-    await db
-      .insert(monthlyUsageRecordsTable)
-      .values({
-        companyId,
-        billingMonth,
-        activeUnitCount: currentActiveCount,
-        peakActiveUnitCount: currentActiveCount,
-        subscriptionTier: tier,
-        ratePerUnitCents: rate,
-        estimatedAmountCents: estimated,
-        invoiceStatus: "open",
-        pricingConfigId: config.id,
-        companyOverrideId: override?.id ?? null,
-        snapshotFreeUnitLimit: config.freeUnitLimit,
-        snapshotStandardMin: config.standardMin,
-        snapshotStandardMax: config.standardMax,
-        snapshotEnterpriseStart: config.enterpriseStart,
-        snapshotRatePerUnitCents: config.ratePerUnitCents,
-        snapshotEnterpriseBehavior: config.enterprisePricingBehavior,
-        snapshotCurrency: config.currency,
+    if (existing) {
+      if (existing.invoiceStatus === "finalised") {
+        // Finalised records must not be recalculated
+        return;
+      }
+
+      // PEAK FIX: compute the new peak explicitly so tier/estimate are peak-based.
+      const newPeak = Math.max(existing.peakActiveUnitCount, currentActiveCount);
+      const tier = calculateTier(newPeak, config, override);
+      const estimated = calculateEstimatedAmountCents(newPeak, config, override);
+      const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
+
+      // Atomic GREATEST() on peak guards against any concurrent write that
+      // bypasses the advisory lock (belt-and-suspenders).
+      await tx
+        .update(monthlyUsageRecordsTable)
+        .set({
+          activeUnitCount: currentActiveCount,
+          peakActiveUnitCount: sql`GREATEST(${monthlyUsageRecordsTable.peakActiveUnitCount}, ${currentActiveCount})`,
+          subscriptionTier: tier,
+          ratePerUnitCents: rate,
+          estimatedAmountCents: estimated,
+          pricingConfigId: config.id,
+          companyOverrideId: override?.id ?? null,
+          snapshotFreeUnitLimit: config.freeUnitLimit,
+          snapshotStandardMin: config.standardMin,
+          snapshotStandardMax: config.standardMax,
+          snapshotEnterpriseStart: config.enterpriseStart,
+          snapshotRatePerUnitCents: config.ratePerUnitCents,
+          snapshotEnterpriseBehavior: config.enterprisePricingBehavior,
+          snapshotCurrency: config.currency,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(monthlyUsageRecordsTable.companyId, companyId),
+            eq(monthlyUsageRecordsTable.billingMonth, billingMonth),
+            ne(monthlyUsageRecordsTable.invoiceStatus, "finalised"),
+          ),
+        );
+    } else {
+      // New record: peak equals current count (first observation this month)
+      const tier = calculateTier(currentActiveCount, config, override);
+      const estimated = calculateEstimatedAmountCents(currentActiveCount, config, override);
+      const rate = override?.customRatePerUnitCents ?? config.ratePerUnitCents;
+
+      await tx
+        .insert(monthlyUsageRecordsTable)
+        .values({
+          companyId,
+          billingMonth,
+          activeUnitCount: currentActiveCount,
+          peakActiveUnitCount: currentActiveCount,
+          subscriptionTier: tier,
+          ratePerUnitCents: rate,
+          estimatedAmountCents: estimated,
+          invoiceStatus: "open",
+          pricingConfigId: config.id,
+          companyOverrideId: override?.id ?? null,
+          snapshotFreeUnitLimit: config.freeUnitLimit,
+          snapshotStandardMin: config.standardMin,
+          snapshotStandardMax: config.standardMax,
+          snapshotEnterpriseStart: config.enterpriseStart,
+          snapshotRatePerUnitCents: config.ratePerUnitCents,
+          snapshotEnterpriseBehavior: config.enterprisePricingBehavior,
+          snapshotCurrency: config.currency,
+        })
+        .onConflictDoUpdate({
+          // If a concurrent INSERT won the race, UPDATE the row so our count
+          // is not silently dropped.
+          target: [
+            monthlyUsageRecordsTable.companyId,
+            monthlyUsageRecordsTable.billingMonth,
+          ],
+          set: {
+            activeUnitCount: currentActiveCount,
+            peakActiveUnitCount: sql`GREATEST(${monthlyUsageRecordsTable.peakActiveUnitCount}, ${currentActiveCount})`,
+            updatedAt: new Date(),
+          },
+        });
+    }
+
+    // Update company tier for display (derived from DB config, not hardcoded).
+    // Use the peak-based tier so that archiving does not downgrade the displayed tier.
+    const peakForCompany = existing
+      ? Math.max(existing.peakActiveUnitCount, currentActiveCount)
+      : currentActiveCount;
+    const companyTier = calculateTier(peakForCompany, config, override);
+
+    await tx
+      .update(companiesTable)
+      .set({
+        subscriptionTier: companyTier,
+        enterpriseFlagged: companyTier === "enterprise",
+        updatedAt: new Date(),
       })
-      .onConflictDoNothing();
-  }
-
-  // Update company tier for display (derived from DB config, not hardcoded).
-  // Use the peak-based tier so that archiving does not downgrade the displayed tier.
-  const peakForCompany = existing
-    ? Math.max(existing.peakActiveUnitCount, currentActiveCount)
-    : currentActiveCount;
-  const companyTier = calculateTier(peakForCompany, config, override);
-
-  await db
-    .update(companiesTable)
-    .set({
-      subscriptionTier: companyTier,
-      enterpriseFlagged: companyTier === "enterprise",
-      updatedAt: new Date(),
-    })
-    .where(eq(companiesTable.id, companyId));
-}
-
-// ── Helper: count active apartments for a company ─────────────────────────────
-// Only unit_type = 'apartment' counts toward billing
-
-async function countActiveApartments(companyId: string): Promise<number> {
-  const [result] = await db
-    .select({ count: count() })
-    .from(unitsTable)
-    .where(
-      and(
-        eq(unitsTable.companyId, companyId),
-        eq(unitsTable.status, "active"),
-        eq(unitsTable.unitType, "apartment"),
-      ),
-    );
-  return Number(result?.count ?? 0);
+      .where(eq(companiesTable.id, companyId));
+  });
 }
 
 // ── Helper: verify admin access for a unit ────────────────────────────────────
@@ -250,10 +266,11 @@ router.post(
         })
         .returning();
 
-      // Update billing only for apartments
+      // Update billing only for apartments.
+      // updateMonthlyUsage recounts inside a per-company advisory lock —
+      // safe under concurrent creates.
       if (unit.unitType === "apartment") {
-        const activeCount = await countActiveApartments(building.companyId);
-        await updateMonthlyUsage(building.companyId, activeCount);
+        await updateMonthlyUsage(building.companyId);
       }
 
       res.status(201).json(unit);
@@ -407,11 +424,10 @@ router.post(
         .where(eq(unitsTable.id, unitId))
         .returning();
 
-      // Update billing — archiving drops active count but never lowers peak
-      // (GREATEST() in updateMonthlyUsage ensures peak is preserved)
+      // Update billing — archiving drops active count but never lowers peak.
+      // updateMonthlyUsage recounts inside a per-company advisory lock.
       if (unit.unitType === "apartment") {
-        const activeCount = await countActiveApartments(unit.companyId);
-        await updateMonthlyUsage(unit.companyId, activeCount);
+        await updateMonthlyUsage(unit.companyId);
       }
 
       res.json(updated);
@@ -466,10 +482,10 @@ router.post(
         .where(eq(unitsTable.id, unitId))
         .returning();
 
-      // Update billing — count includes restored apartment, update peak if needed
+      // Update billing — count includes restored apartment.
+      // updateMonthlyUsage recounts inside a per-company advisory lock.
       if (unit.unitType === "apartment") {
-        const activeCount = await countActiveApartments(unit.companyId);
-        await updateMonthlyUsage(unit.companyId, activeCount);
+        await updateMonthlyUsage(unit.companyId);
       }
 
       res.json(updated);

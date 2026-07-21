@@ -23,6 +23,7 @@
  *   POST   /internal/notices/publish-scheduled  trigger scheduled publishing
  */
 
+import { timingSafeEqual } from "node:crypto";
 import { Router } from "express";
 import {
   and,
@@ -1207,9 +1208,17 @@ router.get(
     const userId = authReq.user.id;
 
     try {
-      // Unread = delivered to user + firstReadAt is null + notice is published
+      // A notice is unread when:
+      //   - lastReadVersion is null  (never read, or reset by an emergency edit)
+      //   - lastReadVersion < notice.versionNumber  (a newer version exists)
+      // Using version comparison is reliable for all notice types, including
+      // emergency notices whose lastReadVersion is reset to null on edit.
       const unreadNotices = await db
-        .select({ noticeId: noticeDeliveriesTable.noticeId, lastReadVersion: noticeDeliveriesTable.lastReadVersion })
+        .select({
+          noticeId: noticeDeliveriesTable.noticeId,
+          lastReadVersion: noticeDeliveriesTable.lastReadVersion,
+          noticeVersionNumber: noticesTable.versionNumber,
+        })
         .from(noticeDeliveriesTable)
         .innerJoin(noticesTable, eq(noticesTable.id, noticeDeliveriesTable.noticeId))
         .where(
@@ -1219,11 +1228,11 @@ router.get(
           ),
         );
 
-      // Count: for non-emergency: firstReadAt is null
-      // For emergency: lastReadVersion < notice.versionNumber OR lastReadVersion is null
-      const unreadCount = unreadNotices.filter((row) => {
-        return row.lastReadVersion === null;
-      }).length;
+      const unreadCount = unreadNotices.filter(
+        (row) =>
+          row.lastReadVersion === null ||
+          row.lastReadVersion < row.noticeVersionNumber,
+      ).length;
 
       res.json({ unreadCount });
     } catch (err) {
@@ -1364,7 +1373,9 @@ router.post(
 );
 
 // ── GET /me/notices/:noticeId/tenant-delivery ─────────────────────────────────
-// Owner may see tenant delivery status for apartments they own.
+// An owner may see tenant delivery status for apartments they actively own.
+// The owner does NOT need to be a recipient of the notice personally —
+// this allows owners to see tenant delivery for tenants-only notices.
 
 router.get(
   "/me/notices/:noticeId/tenant-delivery",
@@ -1376,48 +1387,31 @@ router.get(
     const userId = authReq.user.id;
 
     try {
-      // Verify the caller has a delivery for this notice (owns an apartment it was sent to)
-      const [ownerDelivery] = await db
-        .select()
-        .from(noticeDeliveriesTable)
+      // Gate: the caller must have at least one active ownership of an active apartment.
+      // Revoked, archived, or tenant memberships are excluded.
+      const ownedUnitRows = await db
+        .select({ unitId: unitMembershipsTable.unitId })
+        .from(unitMembershipsTable)
+        .innerJoin(unitsTable, eq(unitsTable.id, unitMembershipsTable.unitId))
         .where(
           and(
-            eq(noticeDeliveriesTable.noticeId, noticeId),
-            eq(noticeDeliveriesTable.userId, userId),
-            eq(noticeDeliveriesTable.recipientRole, "owner"),
+            eq(unitMembershipsTable.userId, userId),
+            eq(unitMembershipsTable.role, "owner"),
+            eq(unitMembershipsTable.status, "active"),
+            eq(unitsTable.status, "active"),
           ),
-        )
-        .limit(1);
+        );
 
-      if (!ownerDelivery) {
+      const ownedUnitIds = ownedUnitRows.map((r) => r.unitId);
+
+      if (ownedUnitIds.length === 0) {
         res.status(403).json({ error: "Forbidden" });
         return;
       }
 
-      // Find the apartments this owner owns that received this notice
-      const ownedUnitContexts = await db
-        .select({
-          unitId: noticeDeliveryContextsTable.unitId,
-          buildingId: noticeDeliveryContextsTable.buildingId,
-        })
-        .from(noticeDeliveryContextsTable)
-        .where(
-          and(
-            eq(noticeDeliveryContextsTable.deliveryId, ownerDelivery.id),
-            eq(noticeDeliveryContextsTable.relationshipRole, "owner"),
-          ),
-        );
-
-      const ownedUnitIds = ownedUnitContexts
-        .map((c) => c.unitId)
-        .filter((id): id is string => id !== null);
-
-      if (ownedUnitIds.length === 0) {
-        res.json([]);
-        return;
-      }
-
-      // Find tenant deliveries for those units
+      // Find tenant delivery contexts for this notice that go through the
+      // owner's apartments.  Tenant contexts for apartments the caller does
+      // not own are excluded by the inArray filter.
       const tenantContexts = await db
         .select({
           deliveryId: noticeDeliveryContextsTable.deliveryId,
@@ -1425,21 +1419,28 @@ router.get(
           unitNumber: unitsTable.unitNumber,
         })
         .from(noticeDeliveryContextsTable)
+        .innerJoin(
+          noticeDeliveriesTable,
+          eq(noticeDeliveriesTable.id, noticeDeliveryContextsTable.deliveryId),
+        )
         .innerJoin(unitsTable, eq(unitsTable.id, noticeDeliveryContextsTable.unitId))
         .where(
           and(
-            inArray(noticeDeliveryContextsTable.unitId, ownedUnitIds),
+            eq(noticeDeliveriesTable.noticeId, noticeId),
             eq(noticeDeliveryContextsTable.relationshipRole, "tenant"),
+            inArray(noticeDeliveryContextsTable.unitId, ownedUnitIds),
           ),
         );
+
+      if (tenantContexts.length === 0) {
+        res.json([]);
+        return;
+      }
 
       const tenantDeliveryResults = await Promise.all(
         tenantContexts.map(async (ctx) => {
           const [tenantDelivery] = await db
             .select({
-              id: noticeDeliveriesTable.id,
-              userId: noticeDeliveriesTable.userId,
-              recipientRole: noticeDeliveriesTable.recipientRole,
               firstReadAt: noticeDeliveriesTable.firstReadAt,
               lastReadAt: noticeDeliveriesTable.lastReadAt,
               tenantName: usersTable.fullName,
@@ -1472,10 +1473,32 @@ router.get(
 // For scheduled job invocation. No external auth — should be network-isolated.
 
 router.post("/internal/notices/publish-scheduled", async (req, res) => {
-  // Basic bearer token check using SESSION_SECRET as a shared secret
+  // Fail closed: SESSION_SECRET MUST be configured.
+  // An unconfigured secret means any caller could trigger publication.
   const secret = process.env["SESSION_SECRET"];
+  if (!secret?.trim()) {
+    res.status(503).json({ error: "Service not configured" });
+    return;
+  }
+
+  // Require a Bearer token header
   const authHeader = req.headers.authorization;
-  if (secret && authHeader !== `Bearer ${secret}`) {
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const provided = authHeader.slice(7); // strip "Bearer "
+
+  // Timing-safe comparison prevents secret-length oracle attacks
+  const secretBuf = Buffer.from(secret, "utf8");
+  const providedBuf = Buffer.from(provided, "utf8");
+  let isValid = false;
+  if (secretBuf.length === providedBuf.length) {
+    isValid = timingSafeEqual(secretBuf, providedBuf);
+  }
+
+  if (!isValid) {
     res.status(403).json({ error: "Forbidden" });
     return;
   }

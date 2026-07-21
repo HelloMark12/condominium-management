@@ -440,7 +440,9 @@ export async function editPublishedNotice(
       unitIds: unitTargets.map((t) => t.unitId),
     };
 
-    // Store version record with CURRENT (pre-edit) content
+    // Store a version record capturing the incoming edit (the new content after
+    // applying changes).  This record is immutable once written; it represents
+    // the state the notice will be in after this edit is committed.
     await tx.insert(noticeVersionsTable).values({
       noticeId,
       companyId: notice.companyId,

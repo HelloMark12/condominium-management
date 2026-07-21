@@ -1,15 +1,30 @@
 import { Link } from "wouter";
-import { Building, MapPin, ArrowRight } from "lucide-react";
-import { useGetMyUnits, getGetMyUnitsQueryKey } from "@workspace/api-client-react";
+import { Building, MapPin, ArrowRight, Bell } from "lucide-react";
+import {
+  useGetMyUnits,
+  getGetMyUnitsQueryKey,
+  useGetMyNoticesUnreadCount,
+  getGetMyNoticesUnreadCountQueryKey,
+} from "@workspace/api-client-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 export default function OwnerHomePage() {
   const { data: units, isLoading } = useGetMyUnits({
     query: { queryKey: getGetMyUnitsQueryKey() }
   });
+
+  const { data: unreadData } = useGetMyNoticesUnreadCount({
+    query: {
+      queryKey: getGetMyNoticesUnreadCountQueryKey(),
+      refetchInterval: 60_000, // refresh every minute
+    },
+  });
+
+  const unreadCount: number = (unreadData as { unreadCount?: number } | undefined)?.unreadCount ?? 0;
 
   return (
     <div className="space-y-8">
@@ -17,6 +32,37 @@ export default function OwnerHomePage() {
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Welcome back</h1>
         <p className="text-muted-foreground mt-2">Manage your property portfolio from one place.</p>
       </div>
+
+      {/* Notices card */}
+      <Card className="bg-card">
+        <CardContent className="p-5 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 bg-primary/10 text-primary rounded-xl flex items-center justify-center shrink-0">
+              <Bell className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-base">Notices</span>
+                {unreadCount > 0 && (
+                  <Badge variant="destructive" className="text-xs px-2 py-0.5">
+                    {unreadCount} unread
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {unreadCount > 0
+                  ? `You have ${unreadCount} unread notice${unreadCount === 1 ? "" : "s"}`
+                  : "No unread notices"}
+              </p>
+            </div>
+          </div>
+          <Link href="/owner/notices">
+            <Button variant="outline" size="sm">
+              View notices <ArrowRight className="ml-1 h-4 w-4" />
+            </Button>
+          </Link>
+        </CardContent>
+      </Card>
 
       <div>
         <div className="flex items-center justify-between mb-4">

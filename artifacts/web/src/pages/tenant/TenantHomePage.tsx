@@ -1,15 +1,30 @@
 import { Link } from "wouter";
 import { MapPin, Bell, DoorOpen, ArrowRight } from "lucide-react";
-import { useGetMyTenancy, getGetMyTenancyQueryKey } from "@workspace/api-client-react";
+import {
+  useGetMyTenancy,
+  getGetMyTenancyQueryKey,
+  useGetMyNoticesUnreadCount,
+  getGetMyNoticesUnreadCountQueryKey,
+} from "@workspace/api-client-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 export default function TenantHomePage() {
   const { data: tenancy, isLoading } = useGetMyTenancy({
     query: { queryKey: getGetMyTenancyQueryKey() }
   });
+
+  const { data: unreadData } = useGetMyNoticesUnreadCount({
+    query: {
+      queryKey: getGetMyNoticesUnreadCountQueryKey(),
+      refetchInterval: 60_000,
+    },
+  });
+
+  const unreadCount: number = (unreadData as { unreadCount?: number } | undefined)?.unreadCount ?? 0;
 
   if (isLoading) {
     return <div className="space-y-8"><Skeleton className="h-40 w-full rounded-2xl" /><Skeleton className="h-64 w-full rounded-2xl" /></div>;
@@ -55,10 +70,23 @@ export default function TenantHomePage() {
             <div className="h-12 w-12 bg-primary/10 text-primary rounded-xl flex items-center justify-center mb-4">
               <Bell className="h-6 w-6" />
             </div>
-            <h3 className="text-xl font-semibold mb-2">Notice Board</h3>
-            <p className="text-muted-foreground mb-6">Check recent announcements from your building administrator.</p>
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-xl font-semibold">Notice Board</h3>
+              {unreadCount > 0 && (
+                <Badge variant="destructive" className="text-xs px-2 py-0.5">
+                  {unreadCount}
+                </Badge>
+              )}
+            </div>
+            <p className="text-muted-foreground mb-6">
+              {unreadCount > 0
+                ? `${unreadCount} unread notice${unreadCount === 1 ? "" : "s"} from your building administrator.`
+                : "Check recent announcements from your building administrator."}
+            </p>
             <Link href="/tenant/notices">
-              <Button variant="outline" className="w-full">View Notices</Button>
+              <Button variant="outline" className="w-full">
+                View Notices {unreadCount > 0 && <ArrowRight className="ml-1 h-4 w-4" />}
+              </Button>
             </Link>
           </CardContent>
         </Card>
